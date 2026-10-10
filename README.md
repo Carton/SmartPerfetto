@@ -156,6 +156,7 @@ Server verification details are collapsed by default; expand them to read the fu
 Web, CLI and exported reports retain each claim's evidence and verification
 status. A malformed claim leaves other valid claims eligible for checking;
 missing proof and a contradicted claim remain distinct outcomes.
+Faithful prose rounding of a uniquely bound, proved original value can be recorded as a display warning while remaining unverified. Raw citations and numeric declarations retain full precision; wrong values and component-as-total citations remain rejected.
 Final conclusions retain all material findings, supporting evidence and limitations within the requested scope, even when intermediate tables are hidden. Length alone does not justify dropping findings or claims.
 Final answers prefer compact tables for comparable metrics, phase timings and trace differences, alongside explanations and evidence references. Single values and questions better answered in prose remain free-form.
 

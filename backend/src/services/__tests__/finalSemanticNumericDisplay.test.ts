@@ -16,6 +16,15 @@ const quote = (body: string, text: string, numeric: ReturnType<typeof eq>) => {
 };
 
 describe('locatedNumbersShowDeclaredRounding', () => {
+  it('distinguishes actual display precision loss from an exact value or unit conversion', () => {
+    const body = '耗时 32.6 ms';
+    const locations = [{start: 0, end: body.length}];
+    expect(locatedNumbersShowDeclaredRounding(body, locations, eq(32.57614380379747, 'ms'), true)).toBe(true);
+    expect(locatedNumbersShowDeclaredRounding(body, locations, eq(32.6, 'ms'), true)).toBe(false);
+    expect(locatedNumbersShowDeclaredRounding(body, locations, eq(32600000, 'ns'), true)).toBe(false);
+    expect(locatedNumbersShowDeclaredRounding(body, locations, eq(32.77614380379747, 'ms'), true)).toBe(false);
+  });
+
   // Declarations and table rows from the critical-path E2E rounds 3 and 4.
   it('accepts a bare rounding at the displayed precision after an exact unit conversion', () => {
     expect(line('| S（可中断睡眠） | 33 | 5,844.24 ms | **97.25%** |', eq(5844240564, 'ns'))).toBe(true);

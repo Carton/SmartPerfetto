@@ -336,6 +336,13 @@ witness、受信单位/字段语义或覆盖时保留候选/未知状态；
 联合决定。报告、CLI 和 snapshot 保留 provenance；chat 分开投影正文、machine sidecar
 和结构化 runtime appendix，不能机械删改自然语言结论。
 
+数值引用比较与正文显示精度保持分离。原始引用和 `numeric.cell` 命题仍做精确比较；
+若一次语义审核把忠实舍入判成 `numeric_mismatch`，finalizer 可将该项记为显示精度警告，
+但数值路径必须已有完整有限证明，并通过私有绑定键、原行号、列和证明 anchor 唯一定位
+不可变捕获值及生产者单位。正文和 issue 位置内只能有一个同值显示候选，且必须真的
+丢弃精度；精确重复、其他语义错误、错误值及把分项当总计不适用。结果保持 partial，
+不改写原命题、正文或审核，不由显示规则授予 verified。报告、CLI、snapshot 共用此边界。
+
 声明有效性按条目判定。framing、根 schema、重复 ID、无效 proposal 集合和
 `sourceClaimBindings` 引用等根错误仍使整份声明 `ineligible`；某条 claim 或 proposal
 的错误只影响该条目，声明为 `partially_valid`、根保持 `eligible`。无效 claim 保留原位置，

@@ -23,7 +23,8 @@ import {canonicalizeAnalysisResult, isIssuedCanonicalAnalysisProjection} from '.
 import {attachSourceUseToAnalysisResult, verifySourceClaimBindings} from './codebase/sourceClaimVerifier';
 import {buildKnowledgeUse} from './knowledge/knowledgeUse';
 import {prepareAnalysisRelations} from './evidence/analysisRelationPreparation';
-import {prepareClaimEvidence, preparedClaimEvidenceSnapshot, preparedIdentityResolutions} from './evidence/claimEvidencePreparation';
+import {evidenceReferenceKey, prepareClaimEvidence, preparedClaimEvidenceSnapshot,
+  preparedIdentityResolutions} from './evidence/claimEvidencePreparation';
 import {runClaimVerification, collectMatchedTraceEvidenceRefIdsByClaimId} from './verifier/claimVerificationRunner';
 import {assessFinalSemantics, buildFinalSemanticPrompt, FINAL_SEMANTIC_INPUT_BYTE_LIMIT, FINAL_SEMANTIC_RULE_VERSION,
   semanticReviewNotRequired, type FinalSemanticAssessment, type FinalSemanticSnapshot,
@@ -192,10 +193,10 @@ function semanticReviewTrace(review: SemanticClaimAssessment, body: string): Cla
 
 /**
  * The one protocol-legal path from a review `numeric_mismatch` to the
- * display-rounding warning (plan 2 D), fail-closed on every condition: the
- * claim is a `captured.cell` proposition with exactly one subjectRef; exactly
- * one anchor cell of that claim matches the subjectRef's evidenceRefId,
- * rowIndex and column and carries a numeric actual value with a unit; every
+ * display-rounding warning, fail-closed on every condition: a `captured.cell`
+ * or completely proved `numeric.cell` eq proposition has one subjectRef; one
+ * matching anchor cell carries the immutable original value and producer unit;
+ * numeric propositions additionally require actual display precision loss. Every
  * issue location lies inside the claim-level contentLocations the review
  * returned for this claim; and no second number of the cell value's unit
  * family inside those claim-level locations equals it. The anchor proves which
@@ -208,28 +209,36 @@ function sameCapturedCell(
   review: SemanticClaimAssessment,
   issue: SemanticClaimAssessment['issues'][number],
   body: string,
-): {value: number | string; unit: string} | undefined {
+  prior: ClaimVerificationClaimResult,
+): {value: number | string; unit: string; requirePrecisionLoss: boolean} | undefined {
   const semantics = claim.semantics;
-  if (semantics?.predicate !== 'captured.cell' || !support) return undefined;
+  const numericCell = semantics?.predicate === 'numeric.cell';
+  if (!semantics || (semantics.predicate !== 'captured.cell' && !numericCell) || !support) return undefined;
+  const finiteProof = prior.deterministicProof;
+  if (numericCell && (semantics.numeric?.operator !== 'eq' || finiteProof?.kind !== 'numeric_cell' ||
+      finiteProof.status !== 'proved' || prior.propositionCoverage?.status !== 'complete')) return undefined;
   const subject = semantics.scope.subjectRefs?.length === 1 &&
     (semantics.scope.objectRefs?.length || 0) === 0 ? semantics.scope.subjectRefs[0] : undefined;
-  if (!subject?.evidenceRefId || subject.rowIndex === undefined || !subject.column) return undefined;
+  if (!subject?.evidenceRefId || subject.rowIndex === undefined || subject.rowIndex < 0 || !subject.column) return undefined;
   const {rowIndex, column} = subject;
+  const referenceKey = evidenceReferenceKey(subject);
   // The unit is producer authority: the captured field semantics the anchor
   // carries, never a display string on the cell.
   const matches = (support.anchors ?? []).flatMap(anchor => {
-    const unit = getCapturedAnchorFacts(anchor)?.fields[column]?.unit;
-    if (!unit || !unit.trim()) return [];
+    const facts = getCapturedAnchorFacts(anchor);
+    const unit = facts?.fields[column]?.unit;
+    if (!facts || facts.originalRowIndex !== rowIndex || !unit || !unit.trim()) return [];
+    if (facts.referenceKey !== undefined ? facts.referenceKey !== referenceKey
+      : anchor.evidenceRefId !== subject.evidenceRefId) return [];
+    if (numericCell && !finiteProof?.anchorIds.includes(anchor.anchorId)) return [];
     return (anchor.cells ?? [])
       .filter(cell => cell.rowIndex === rowIndex && cell.column === column)
-      .map(cell => ({cell, unit}));
-  }).filter(match => match.cell.actualValue !== undefined);
+      .map(() => ({value: facts.row[column], unit}));
+  });
   if (matches.length !== 1) return undefined;
-  const {cell, unit} = matches[0];
-  const value = cell.actualValue;
+  const {value, unit} = matches[0];
   if (!(typeof value === 'number' && Number.isFinite(value) ||
     typeof value === 'string' && /^-?(?:\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value))) return undefined;
-  if (rowIndex < 0) return undefined;
   // Every issue location must belong to this claim's located body text.
   const inside = (location: {start: number; end: number}) =>
     review.contentLocations.some(({start, end}) => location.start >= start && location.end <= end);
@@ -239,7 +248,7 @@ function sameCapturedCell(
   const cellNumeric = {operator: 'eq', value, unit};
   return countLocatedNumbersShowingRounding(body, review.contentLocations, cellNumeric) === 1 &&
     countLocatedNumbersShowingRounding(body, issue.contentLocations, cellNumeric) === 1
-    ? {value, unit} : undefined;
+    ? {value, unit, requirePrecisionLoss: numericCell} : undefined;
 }
 
 /** Finite proof never promotes itself; the full current proposition must agree with the body. */
@@ -285,9 +294,9 @@ function joinClaimVerification(input: {
       // shown value in another cell's place is a real mismatch.
       const displayRounding = (issue: typeof review.issues[number]): boolean => {
         if (issue.code !== 'numeric_mismatch') return false;
-        const cell = sameCapturedCell(claim, supportById.get(id), review, issue, body);
+        const cell = sameCapturedCell(claim, supportById.get(id), review, issue, body, prior);
         return cell ? locatedNumbersShowDeclaredRounding(body, issue.contentLocations,
-          {operator: 'eq', value: cell.value, unit: cell.unit}) : false;
+          {operator: 'eq', value: cell.value, unit: cell.unit}, cell.requirePrecisionLoss) : false;
       };
       const contradictions = review.issues.filter(issue => !displayRounding(issue));
       for (const issue of review.issues) issues.push(contradictions.includes(issue)

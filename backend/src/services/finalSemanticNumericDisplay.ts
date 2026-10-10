@@ -16,7 +16,7 @@
 // comparison, malformed digits, a non-zero value shown as zero. Exact rationals
 // and the review template's closed unit mapping only.
 
-import {exactNumber, type Rational} from '../utils/exactDecimal';
+import {compareRationals, exactNumber, type Rational} from '../utils/exactDecimal';
 
 interface UnitScale {family: string; factor: bigint}
 
@@ -245,11 +245,14 @@ export function countLocatedNumbersShowingRounding(
  * unit's family is the declared exact `eq` value rounded half-up or truncated
  * toward zero at its displayed decimal places, at least one such number
  * exists, and nothing in its line could change the proposition.
+ * `requirePrecisionLoss` excludes an exact value or lossless unit conversion:
+ * neither explains a numeric review mismatch as a rounding defect.
  */
 export function locatedNumbersShowDeclaredRounding(
   body: string,
   locations: readonly {start: number; end: number}[],
   numeric: {operator: string; value: number | string; unit: string} | undefined,
+  requirePrecisionLoss = false,
 ): boolean {
   if (!numeric || numeric.operator !== 'eq' || locations.length === 0) return false;
   const declared = exactNumber(numeric.value);
@@ -257,6 +260,7 @@ export function locatedNumbersShowDeclaredRounding(
   if (!declared || !declaredScale) return false;
   const countFamily = UNITLESS_FAMILIES.has(declaredScale.family);
   let matched = 0;
+  let losesPrecision = false;
   for (const location of locations) {
     if (!(location.start >= 0 && location.end > location.start && location.end <= body.length)) return false;
     const lineStart = body.lastIndexOf('\n', location.start - 1) + 1;
@@ -292,8 +296,9 @@ export function locatedNumbersShowDeclaredRounding(
       if (displayed === 0n && declared.numerator !== 0n) return false;
       if (roundedScaled(shown, token.decimals) !== displayed &&
         truncatedScaled(shown, token.decimals) !== displayed) return false;
+      losesPrecision ||= compareRationals(shown, token.rational) !== 0;
       matched += 1;
     }
   }
-  return matched > 0;
+  return matched > 0 && (!requirePrecisionLoss || losesPrecision);
 }

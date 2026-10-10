@@ -335,15 +335,20 @@ Keep these boundaries intact:
   `peer_event_wait` warning (a lock holder waiting on the network).
 - A semantic `numeric_mismatch` is recorded as the warning
   `semantic_numeric_display_rounding` only under captured-cell identity: the
-  claim is a `captured.cell` proposition with exactly one subject reference and
-  exactly one matching anchor cell (unit from the captured producer semantics),
+  claim is a `captured.cell` proposition, or a `numeric.cell` `eq` proposition
+  with a proved finite rule and complete proposition coverage. It has exactly
+  one subject reference and one matching immutable original cell (private
+  reference binding, original row index and column; producer unit),
   every issue location lies inside the claim-level `contentLocations` the review
   returned, and exactly one number in those claim locations faithfully shows the
   cell's actual value (closed unit mapping, exact rational arithmetic, display
-  precision, no ranges or comparisons). The same shown value in another cell's
-  place is a real mismatch, so any other proposition shape — a `numeric.cell`
-  declaration included — keeps the error. The claim stays unverified, never
-  contradicted. An undeclared assertion (`semantic_undeclared_claim`) is
+  precision, no ranges or comparisons). The numeric path must use a finite-proof
+  anchor and actually lose display precision; an exact value or lossless unit
+  conversion cannot explain a review mismatch as rounding. A declared number,
+  mutable display value, unresolved raw citation, rejected numeric proposition
+  or component row standing for a total cannot enable the exception. Other
+  proposition shapes and semantic errors keep their standing. Display rounding
+  alone leaves the claim unverified rather than contradicted. An undeclared assertion (`semantic_undeclared_claim`) is
   likewise a warning that blocks passing and stays named in the claim line.
   The review quotes the number itself; the location only selects
   it, and its whole line decides (ranges, signs, comparisons, units). A review

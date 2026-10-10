@@ -80,6 +80,10 @@ significant-figure rounding, ranges, `±`, cross-family or unknown-unit conversi
 under this display rule. Preserve the exact original declaration and raw evidence
 references; presentation equivalence cannot supply unit authority or proof.
 
+Keep a total or mean distinct from an individual component. If the body presents
+a component as an aggregate, report the applicable scope or predicate mismatch;
+do not excuse it as decimal rounding or infer a captured aggregate from prose.
+
 For `captured.cell`, the proposition is strict equality to the explicit string,
 boolean or null `value` in its unique semantic subject reference. It describes
 one captured cell; a broader identity, execution or causal assertion is a

@@ -4,7 +4,8 @@
 
 import {afterEach, describe, expect, it, jest} from '@jest/globals';
 import type {AnalysisResult} from '../../agent/core/orchestratorTypes';
-import {parseConclusionContractDeclaration, renderConclusionContractSidecar, type ConclusionContract} from '../../agent/core/conclusionContract';
+import {parseConclusionContractDeclaration, renderConclusionContractSidecar, type ClaimSemanticsV1,
+  type ConclusionContract} from '../../agent/core/conclusionContract';
 import {
   attachFinalizationContext,
   attachRunDeliveryRecord,
@@ -76,17 +77,21 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
   nativeCompletion?: {status: 'incomplete'; reason: 'output_limit'};
   /** A captured.cell proposition whose one cell holds this exact value and unit. */
   capturedCell?: {value: number | string; unit: string; displayed: string};
+  /** A numeric.cell proposition with a captured raw value and independently declared numeric semantics. */
+  numericCell?: {value: number | string; unit: string; displayed: string; numeric?: ClaimSemanticsV1['numeric']};
   /** A second reference naming the same cell: two matching anchor cells. */
   duplicateSubjectCellRef?: boolean;
   dispatch?: (input: IntentTransportInput) => Promise<IntentTransportResult>} = {}) {
   const runId = options.runId ?? 'run';
   const capturedCell = options.capturedCell;
-  const body = options.body ?? (capturedCell ? `The captured value is ${capturedCell.displayed}.`
+  const numericCell = options.numericCell;
+  const cell = capturedCell ?? numericCell;
+  const body = options.body ?? (cell ? `The captured value is ${cell.displayed}.`
     : options.source ? 'The captured name identifies the source marker.' : 'The captured value is 49.');
   const ref = {evidenceRefId: 'data:count', rowIndex: 0, column: options.source ? 'name' : 'count',
     value: options.source ? options.source.declaredMarker ?? options.source.marker
       // A captured.cell proposition declares its expected primitive as a string.
-      : capturedCell ? String(capturedCell.value) : options.wrongReferenceValue ?? 49};
+      : capturedCell ? String(capturedCell.value) : options.wrongReferenceValue ?? numericCell?.value ?? 49};
   const declared: ConclusionContract = {schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
     conclusions: [], clusters: [], evidenceChain: [], uncertainties: [], nextSteps: [],
     claims: options.claim === false ? [] : [{id: 'count', kind: options.source?.hypothetical || options.claimKind === 'inference'
@@ -97,18 +102,19 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
         discourse: options.source?.hypothetical ? 'hypothetical' : 'asserted', quantifier: 'one',
         modality: options.source?.hypothetical ? 'possible' : 'certain',
         scope: {population: 'cited_rows', subjectRefs: [ref]},
-        ...(options.source || capturedCell ? {} : {numeric: {operator: 'eq' as const, value: 49, unit: 'count'}})}}]};
+        ...(options.source || capturedCell ? {} : {numeric: numericCell?.numeric ?? {
+          operator: 'eq' as const, value: numericCell?.value ?? 49, unit: numericCell?.unit ?? 'count'}})}}]};
   const result: AnalysisResult = {sessionId: 'final-result-test', conclusion: body, success: true,
     confidence: 0.8, findings: [], hypotheses: [], rounds: 1, totalDurationMs: 1,
     conclusionContract: parseConclusionContractDeclaration(declared).contract};
   const envelope = createDataEnvelope({columns: [ref.column],
-    rows: [[options.source?.marker ?? (capturedCell ? String(capturedCell.value) : 49)]]}, {
+    rows: [[options.source?.marker ?? (capturedCell ? String(capturedCell.value) : numericCell?.value ?? 49)]]}, {
     type: 'sql_result', source: 'execute_sql', title: 'Count', evidenceRefId: 'data:count',
     traceId: 'trace', traceSide: 'current', executionStatus: 'observed', identityResolution: options.identity,
     scopeProvenance: options.scope});
   const store = new ArtifactStore();
   if (options.capture !== false) store.registerStandaloneEvidenceCapture(captureEvidenceTable(envelope.data, {
-    count: {unit: capturedCell?.unit ?? 'count', origin: {kind: 'native_producer', definitionFingerprint: 'count-v1'}},
+    count: {unit: cell?.unit ?? 'count', origin: {kind: 'native_producer', definitionFingerprint: 'count-v1'}},
   }), {meta: envelope.meta, display: envelope.display});
   let sourceUse: SourceUseDecisionV1 | undefined;
   if (options.source) {
@@ -1022,10 +1028,8 @@ describe('shared final analysis boundary', () => {
     expect(target.dispatch).toHaveBeenCalledTimes(1);
   });
 
-  // Plan 2 D: the downgrade needs captured-cell identity. A numeric proposition
-  // whose located text merely repeats its declared value stays a contradiction:
-  // which cell the body rendered cannot be known from a declared number.
-  it('keeps a rounding-shaped mismatch on a numeric proposition an error', async () => {
+  // An exact repetition does not explain a review mismatch as display rounding.
+  it('keeps an exact numeric repetition reported as a mismatch an error', async () => {
     const target = fixture({inconsistent: true});
     const final = await target.run();
     const verification = final.result.claimVerificationResult;
@@ -1034,6 +1038,140 @@ describe('shared final analysis boundary', () => {
     expect(verification?.issues.some(issue => issue.severity === 'error' && issue.code === 'semantic_numeric_mismatch'))
       .toBe(true);
     expect(verification?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding')).toBe(false);
+  });
+
+  describe('numeric display precision', () => {
+    it.each([
+      {value: 32.57614380379747, unit: 'ms', displayed: '32.6 ms'},
+      {value: 32576143, unit: 'ns', displayed: '32.6 ms'},
+      {value: '32576143', unit: 'ns', displayed: '32.6 ms',
+        numeric: {operator: 'eq' as const, value: '32.576143', unit: 'ms'}},
+      {value: 61.995675, unit: 'ms', displayed: '61.99 ms'},
+      {value: 1048903, unit: 'bytes', displayed: '1.00 MiB'},
+      {value: -3456000, unit: 'ns', displayed: '-3.45 ms'},
+      {value: '0.9725389910893621', unit: 'ratio', displayed: '97.25%'},
+    ])('records a faithful display of $value $unit as a warning without changing the raw proposition', async numericCell => {
+      const target = fixture({inconsistent: true, numericCell});
+      const original = structuredClone(target.result.conclusionContract);
+      const originalBody = target.result.conclusion;
+      const final = await target.run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', passed: false,
+        unsupportedClaimCount: 0, claimResults: [{status: 'partial', deterministicProof: {status: 'proved'},
+          propositionCoverage: {status: 'complete'}}]});
+      expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
+        code: 'semantic_numeric_display_rounding', severity: 'warning'}));
+      expect(final.result.claimVerificationResult?.issues.some(issue => issue.severity === 'error')).toBe(false);
+      expect(final.result.conclusionContract?.claims?.[0].references).toEqual(original?.claims?.[0].references);
+      expect(final.result.conclusionContract?.claims?.[0].semantics).toEqual(original?.claims?.[0].semantics);
+      expect(final.result.conclusion).toBe(originalBody);
+    });
+
+    it.each([
+      {value: 32.57614380379747, unit: 'ms', displayed: '32.7 ms'},
+      {value: 100, unit: 'count', displayed: '102'},
+      {value: 0.4, unit: 'ratio', displayed: '0 ratio'},
+      {value: 32.57614380379747, unit: 'ms', displayed: '-32.6 ms'},
+      {value: 32.57614380379747, unit: 'ms', displayed: 'over 32.6 ms'},
+      {value: 32.57614380379747, unit: 'ms', displayed: '32.5–32.6 ms'},
+      {value: 32.57614380379747, unit: 'ms', displayed: '32.6 MiB'},
+      {value: 32500000, unit: 'ns', displayed: '32.5 ms'},
+      {value: 32.57614380379747, unit: 'ms', displayed: '32.6 ms',
+        numeric: {operator: 'gt' as const, value: 32, unit: 'ms'}},
+    ])('keeps an incorrect or exact display $displayed an error', async numericCell => {
+      const final = await fixture({inconsistent: true, numericCell}).run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', passed: false,
+        claimResults: [{status: 'unsupported'}]});
+      expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
+        code: 'semantic_numeric_mismatch', severity: 'error'}));
+      expect(final.result.claimVerificationResult?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding'))
+        .toBe(false);
+    });
+
+    it('retains verified standing when a complete review accepts a marked faithful approximation', async () => {
+      const target = fixture({numericCell: {value: 32.57614380379747, unit: 'ms', displayed: 'about 32.6 ms'}});
+      const final = await target.run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'passed', passed: true,
+        claimResults: [{status: 'verified', deterministicProof: {status: 'proved'}}]});
+      expect(final.result.conclusionContract?.claims?.[0].references[0].value).toBe(32.57614380379747);
+    });
+
+    it.each(['reference', 'proposition'] as const)('does not repair a rounded raw %s value', async rounded => {
+      const numericCell = {value: 32.57614380379747, unit: 'ms', displayed: '32.6 ms'};
+      const target = fixture({inconsistent: true, report: true, currentRead: true, numericCell: rounded === 'proposition'
+        ? {...numericCell, numeric: {operator: 'eq', value: 32.6, unit: 'ms'}} : numericCell,
+      ...(rounded === 'reference' ? {wrongReferenceValue: 32.6} : {})});
+      const final = await target.run();
+      expect(final.result.claimVerificationResult?.claimResults[0].deterministicProof?.status)
+        .toBe(rounded === 'reference' ? 'candidate' : 'rejected');
+      expect(final.result.claimVerificationResult?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding'))
+        .toBe(false);
+      expect(final.result.claimVerificationResult?.passed).toBe(false);
+    });
+
+    it.each([
+      {capture: false},
+      {numericCell: {value: 32.57614380379747, unit: 'unknown_unit', displayed: '32.6 ms'}},
+      {body: 'The captured value is 32.6 ms; another event lasts 32.6 ms.'},
+    ])('requires one authoritative captured cell and one located display: %j', async options => {
+      const target = fixture({inconsistent: true, report: true,
+        numericCell: {value: 32.57614380379747, unit: 'ms', displayed: '32.6 ms'}, ...options});
+      const final = await target.run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'failed',
+        claimResults: [{status: 'unsupported'}]});
+      expect(final.result.claimVerificationResult?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding'))
+        .toBe(false);
+    });
+
+    it('preserves another semantic error when the numeric display is faithful', async () => {
+      const body = 'The captured value is 32.6 ms.';
+      const location = {start: 0, end: body.length, text: body};
+      const target = fixture({body, numericCell: {value: 32.57614380379747, unit: 'ms', displayed: '32.6 ms'},
+        dispatch: async () => ({status: 'ok', text: JSON.stringify({schemaVersion: 'final_semantic_response@1',
+          bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+          claims: [{claimId: 'count', consistency: 'inconsistent', contentLocations: [location], issues: [
+            {code: 'numeric_mismatch', contentLocations: [location]}, {code: 'scope_mismatch', contentLocations: [location]},
+          ]}], omissions: [], requirements: []})})});
+      const final = await target.run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', passed: false,
+        claimResults: [{status: 'unsupported'}]});
+      expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
+        code: 'semantic_scope_mismatch', severity: 'error'}));
+    });
+
+    it.each([{evidenceRefId: 'data:another-cell'}, {rowIndex: 1}, {column: 'another-column'}])(
+      'cannot use a captured value for another semantic subject: %j', async referencePatch => {
+        const target = fixture({inconsistent: true, report: true,
+          numericCell: {value: 32.57614380379747, unit: 'ms', displayed: '32.6 ms'}});
+        const scope = target.result.conclusionContract!.claims![0].semantics!.scope;
+        scope.subjectRefs = [{...scope.subjectRefs![0], ...referencePatch}];
+        const final = await target.run();
+        expect(final.result.claimVerificationResult?.passed).toBe(false);
+        expect(final.result.claimVerificationResult?.claimResults[0].deterministicProof?.status).not.toBe('proved');
+        expect(final.result.claimVerificationResult?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding'))
+          .toBe(false);
+      });
+
+    it('uses the issued raw value when a mutable display table would make the wrong rounding look faithful', async () => {
+      const target = fixture({inconsistent: true,
+        numericCell: {value: 32.57614380379747, unit: 'ms', displayed: '32.7 ms'}});
+      target.envelope.data.rows[0][0] = 32.67614380379747;
+      const final = await target.run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', passed: false,
+        claimResults: [{status: 'unsupported', deterministicProof: {status: 'proved'}}]});
+      expect(final.result.claimVerificationResult?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding'))
+        .toBe(false);
+    });
+
+    it('rejects a 380 ms total bound to a 130 ms component, and proves the captured aggregate independently', async () => {
+      const component = fixture({numericCell: {value: 130, unit: 'ms', displayed: '380 ms',
+        numeric: {operator: 'eq', value: 380, unit: 'ms'}}});
+      const failed = await component.run();
+      expect(failed.result.claimVerificationResult).toMatchObject({status: 'failed', passed: false,
+        claimResults: [{status: 'unsupported', deterministicProof: {status: 'rejected', reason: 'numeric_operator_rejected'}}]});
+      const aggregate = await fixture({numericCell: {value: 380, unit: 'ms', displayed: '380 ms'}}).run();
+      expect(aggregate.result.claimVerificationResult).toMatchObject({status: 'passed', passed: true,
+        claimResults: [{status: 'verified', deterministicProof: {status: 'proved'}}]});
+    });
   });
 
   it('records a captured-cell mismatch that only shows the cell value at display precision as a warning', async () => {

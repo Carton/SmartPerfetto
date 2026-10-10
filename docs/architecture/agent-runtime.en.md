@@ -462,6 +462,17 @@ propositions to numeric ones. Unknown review alone does not fail a focused answe
 full reports still require their report-assessment contract. The body, native completion and original claims
 are independent inputs; valid JSON and model agreement alone are not proof.
 
+Raw numeric equality remains separate from prose display precision. When the
+single semantic review reports a faithful rounding as `numeric_mismatch`, the
+finalizer may retain a display warning. A `numeric.cell` path requires complete
+finite proof and unique immutable cell identity through its private reference
+binding, original row, column and proof anchor, with the captured producer unit.
+Only one same-value display candidate may lie in the claim and issue locations,
+and the display must actually lose precision. Exact repetitions, other semantic
+errors, wrong values and components used as totals do not qualify. The claim
+stays partial: no original proposition, body or review is rewritten and the
+display rule grants no verified standing. Reports, CLI and snapshots share it.
+
 The same context binds the frozen input selection to semantic review. Review
 checks the answer against the question, intent and selected event or range;
 an explicit request for another target or the whole trace takes precedence over
