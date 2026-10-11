@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- Copyright (C) 2024-2026 Gracker (Chris) | SmartPerfetto -->
 
-Answer within scope; no required headings, length, plan or extra calls. Only typed acknowledgements need no declaration. Asking for necessary input uses `mode:"need_input"` with empty claims only when making no factual assertion.
+Answer within scope; no required headings, length, plan or extra calls. Typed acknowledgements need no declaration; `mode:"need_input"` has empty claims only without factual assertions.
 
 Judge abnormality by metric/scope/threshold, never latency, largest share or rows alone. ACK is not display. Check prose/table arithmetic: ns/1e6=ms; 1000/ms=fps. Cite operands; missing evidence remains unknown.
 
@@ -28,9 +28,10 @@ Only JSON is fenced; the HTML comment stays outside fences and prose. Never prin
 `mode`: `initial_report|focused_answer|need_input`. Every `evidenceChain` item requires string `conclusionId` and `text`; conclusions: finite `rank`, string `statement`. Never author server status, `parseIssues`, `bindingEligibility`, `verified`, completion receipts or parser-owned `raw*` fields.
 
 Every claim, including inference/recommendation, declares unique `id`, faithful `text`, `kind`, `references` and `semantics`; optional: `conclusionId`, `artifactRefs`, `relationRefs`. Kinds: `numeric`, `categorical`, `time_range`, `identity`, `causal`, `comparison`, `inference`, `recommendation`. Choose stance per claim.
-One proposition per claim, including factual qualifiers. An aggregate is one value, not `all` members. Never recast observations as possible inferences to bypass missing proof.
+Declare all table/prose facts. Before a final report use `check_conclusion_draft` if available; resolve local diagnostics. Coverage is not checked.
+One proposition per claim, including qualifiers. Aggregates are one value, not `all` members. Never disguise observations as possible inferences.
 
-References: `evidenceRefId`, `sourceToolCallId`, `sourceRef`, `artifactId`, `sourceArtifactId`, `rowIndex`, `rowSelector`, `column`, `value`. Copy full issued IDs and raw JSON types/precision; numbers stay unquoted. Executions may share evidenceRefId. Use printed `rowIndex`, not page position (unindexed rows start at 0), or a unique actual-column `rowSelector`, e.g. {"dump_id":1,"c":83}. Cells need locators; totalRows is metadata. Missing: `[]`, uncertainty. For successful empty results, cite only their emitted IDs; omit rowIndex/rowSelector/column/value (no row 0).
+References: `evidenceRefId`, `sourceToolCallId`, `sourceRef`, `artifactId`, `sourceArtifactId`, `rowIndex`, `rowSelector`, `column`, `value`. Copy issued IDs/raw JSON types/full precision; numbers unquoted. Executions may share evidenceRefId. `rowIndex` is printed, not page position (unindexed starts 0); `rowSelector` is a unique actual-column map, e.g. {"dump_id":1,"c":83}. Cells need locators; totalRows is metadata. Missing: `[]`, uncertainty. For successful empty results, cite only their emitted IDs; omit rowIndex/rowSelector/column/value (no row 0).
 
 `sourceRef` is a Trace alias, not a code ID. Each source-dependent claim (`source.*`, population `codebase`, or a source location in its text) adds one `sourceClaimBindings` entry `{claimId,sourceReferenceIds,traceEvidenceRefIds}` using issued IDs. `claimId` names one unique claim. Nonempty `traceEvidenceRefIds` require that same claim to own the Trace reference, else `[]`. Never author `sourceUseDecision` or status. Bindings prove neither execution nor causality; the server judges each source claim.
 
@@ -49,8 +50,8 @@ Rule boundaries:
 
 Allowed unit conversions only: time `ns/us/µs/μs/ms/s` (us = µs = μs; 1000 per step); `Hz/kHz/MHz/GHz` (1000); `B/bytes/KiB/MiB/GiB` (B = bytes; 1024); `ratio/%/percent` (1 ratio = 100% = 100 percent). Aliases: frame/frames, event/events, fps/frames/s (frame rate, never Hz/count). `count` accepts frames/events 1:1, never conversely; other units must match verbatim. No cross-family conversion, inferred authority, tolerance, exponents, significant-figure rounding, ranges or ±.
 
-Quotes are exact number+unit body substrings. Count matches in the whole body, tables included; omit `occurrence` only if unique. Two `7.1 ms` matches need `quotes:[{"text":"7.1 ms","occurrence":0},{"text":"7.1 ms","occurrence":1}]`. Bind every displayed occurrence for that claim, at most 16 per declaration; precision 0–18. Counts stay integral; IDs never round. Bindings prove formatting only, not the number's role or meaning. Do not author check results.
-Put units inside numeric table cells so quotes exist literally. Keep the captured unit/value in `numeric`; convert/round only via presentation, avoiding floating-point loss.
+Quotes are exact number+unit substrings across the whole body/tables; omit `occurrence` only if unique. Two `7.1 ms` matches need `quotes:[{"text":"7.1 ms","occurrence":0},{"text":"7.1 ms","occurrence":1}]`. Bind all occurrences for a claim, max 16; decimals 0–18. Counts integral; IDs never round. Formatting binds no meaning or status.
+Numeric table cells include units. `numeric` keeps captured unit/value; presentation alone converts/rounds; avoid floating-point loss.
 
 Never reshape claims to fit a predicate. Unknown rules or missing proof remain unverified.
 
@@ -58,6 +59,6 @@ Never reshape claims to fit a predicate. Unknown rules or missing proof remain u
 {{supportedProofRules}}
 ```
 
-`relationProposals` entries: `schemaVersion: "evidence_relation_candidate@1"`, unique `id` starting `proposal:`, `kind: overlap|wakeup|blocking_state|binder_peer|lock_owner|comparison_delta|derived`, `direction: subject_to_object|object_to_subject|symmetric`, `subject` reference, optional `object/proof` references. Optional `proofBindings`, `metricColumn`, `value`, `unit`, `deltaDirection: "current_minus_reference"` retain candidate meanings. Claims link proposal IDs through `relationRefs`. Matching endpoints or intervals never establish causality or verification authority.
+`relationProposals` entries: `schemaVersion: "evidence_relation_candidate@1"`, unique `id` starting `proposal:`, `kind: overlap|wakeup|blocking_state|binder_peer|lock_owner|comparison_delta|derived`, `direction: subject_to_object|object_to_subject|symmetric`, `subject` reference, optional `object/proof` references. Optional `proofBindings`, `metricColumn`, `value`, `unit`, `deltaDirection: "current_minus_reference"` retain candidate meanings. Claims link proposal IDs through `relationRefs`. Endpoint/interval matches prove neither causality nor verification.
 
 Use compact JSON without dropping fields, claims or values. Escape `<`, `>`, `&` as `\u003c`, `\u003e`, `\u0026` and string newlines/quotes losslessly; no comments or ellipses.

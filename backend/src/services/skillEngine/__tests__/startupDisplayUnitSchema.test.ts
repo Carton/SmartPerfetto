@@ -840,13 +840,14 @@ describe('Skill literal unit authority', () => {
     const definition = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills', file!), 'utf8')) as any;
     const node = stepId ? definition.steps.find((step: any) => step.id === stepId) : definition;
     const executor = createSkillExecutor({query: async () => ({columns: [column!], rows: [[2]], durationMs: 1})});
-    executor.setFragmentRegistry(new Map((node.sql_fragments ?? []).map((fragment: string) =>
-      [fragment, fs.readFileSync(path.join(process.cwd(), 'skills', fragment), 'utf8').trim()])));
-    const skill = normalizeSkillDefinition({...definition, ...node, name: 'authored_unit_capture', type: 'atomic',
-      steps: undefined, process_scope: {role: 'global_context'}}, file!)!;
+    // Exercise the authored display contract without inheriting unrelated
+    // process gates or undefined composite members into this atomic fixture.
+    const skill = normalizeSkillDefinition({name: 'authored_unit_capture', type: 'atomic',
+      sql: `SELECT 2 AS ${column}`, display: {layer: 'list', columns: [
+        node.display.columns.find((field: any) => field.name === column)]},
+      process_scope: {role: 'global_context'}}, file!)!;
     executor.registerSkill(skill);
-    const result = await executor.execute(skill.name, 'trace', {package: '', startup_id: 1, startup_type: 'cold',
-      start_ts: 0, end_ts: 10000000, dur_ms: 10, min_dur_ns: 0, top_k: 15});
+    const result = await executor.execute(skill.name, 'trace', {});
     expect(result.error).toBeUndefined();
     const captured = capturedEvidenceTable(evidenceTableFor(result.displayResults[0])!);
     expect(captured?.rows).toEqual([[2]]);

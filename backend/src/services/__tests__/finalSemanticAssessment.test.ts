@@ -10,12 +10,16 @@ import {attachFinalizationContext, takeFinalizationContext, type RuntimeFinaliza
 import type {IntentTransportInput, IntentTransportResult} from '../../agentRuntime/intentTransport';
 import {buildStrategyRegistrySnapshotFromDefinitions, loadPromptTemplate, type StrategyDefinition} from '../../agentv3/strategyLoader';
 import {analysisDeliveryFingerprint, type AnalysisReportRequirement} from '../../types/analysisDelivery';
+import * as analysisDelivery from '../../types/analysisDelivery';
 import {assessFinalSemantics, buildFinalSemanticPrompt, FINAL_SEMANTIC_INPUT_BYTE_LIMIT,
   type FinalSemanticAssessmentInput} from '../finalSemanticAssessment';
 import type {AnalysisInvestigationRequirement} from '../../types/analysisInvestigation';
 import {resolveAnalysisInvestigationRequirements} from '../../agentRuntime/analysisInvestigationRequirements';
 import {compactSemanticSourceSnapshot} from '../evidence/semanticSourceSnapshot';
 import type {AnalysisRunSelection} from '../../agentRuntime/analysisRunSpec';
+import {attachInvestigationEvidence, buildInvestigationEvidenceSnapshot, compactInvestigationEvidenceForSemantic,
+  recordCaptureToolCall, type InvestigationEvidenceSnapshot} from '../evidence/investigationEvidenceLedger';
+import {captureEvidenceTable} from '../evidence/evidenceCapture';
 
 jest.mock('../../agentv3/strategyLoader', () => {
   const actual = jest.requireActual<typeof import('../../agentv3/strategyLoader')>('../../agentv3/strategyLoader');
@@ -37,6 +41,7 @@ function fixture(options: {
   deadlineMs?: number;
   dispatch?: (input: IntentTransportInput) => Promise<IntentTransportResult>;
   investigationRequirements?: AnalysisInvestigationRequirement[];
+  investigationEvidence?: InvestigationEvidenceSnapshot;
   selection?: AnalysisRunSelection;
   deliveryCall?: {providerOrigin?: string; model?: string};
 } = {}) {
@@ -85,7 +90,8 @@ function fixture(options: {
     traceIdentity: {currentTraceId: 'trace-current', referenceTraceId: 'trace-reference'},
     selection: options.selection,
     deliveryContext: {entry: 'new_finalization', acceptedCandidate: candidate},
-    evidenceReadView: {resolveReferences: reads}, dispatchText: dispatch,
+    evidenceReadView: {resolveReferences: reads,
+      ...(options.investigationEvidence ? {investigationEvidence: () => options.investigationEvidence!} : {})}, dispatchText: dispatch,
     ...(options.deliveryCall ? {deliveryCall: options.deliveryCall} : {}),
   });
   const context = takeFinalizationContext(result)!;
@@ -100,6 +106,8 @@ function fixture(options: {
       }} : {})}};
   if (options.investigationRequirements) input.snapshot.investigationRequirements = resolveAnalysisInvestigationRequirements({
     intent: context.turnIntent, strategyRegistry: registry});
+  if (options.investigationEvidence) input.snapshot.investigationEvidence =
+    compactInvestigationEvidenceForSemantic(options.investigationEvidence, 16 * 1024)!;
   return {input, reply, dispatch, reads, controller, contract, candidate};
 }
 
@@ -137,8 +145,10 @@ describe('versioned investigation semantic coverage', () => {
     expect(run.dispatch).toHaveBeenCalledTimes(1);
   });
 
-  function investigationFixture(scope: 'scene_wide' | 'bounded_question' = 'scene_wide') {
-    const run = fixture({scope, investigationRequirements: [{id: 'system-frequency', domain: 'cpu_frequency',
+  function investigationFixture(scope: 'scene_wide' | 'bounded_question' = 'scene_wide',
+    evidence?: InvestigationEvidenceSnapshot, body?: string) {
+    const run = fixture({scope, body, investigationEvidence: evidence,
+      investigationRequirements: [{id: 'system-frequency', domain: 'cpu_frequency',
       description: 'Explain observed frequency or the precise missing evidence.', required: true,
       evidenceMetrics: ['system.cpu.frequency.time_weighted']}]});
     run.reply.schemaVersion = 'final_semantic_response@3';
@@ -148,6 +158,118 @@ describe('versioned investigation semantic coverage', () => {
     Object.assign(run.reply, {investigation: [row]});
     return {...run, row};
   }
+
+  function issuedInvestigationEvidence(rowCount = 1): InvestigationEvidenceSnapshot {
+    const columns = ['start', 'end', 'frequency', 'status'];
+    const witness = captureEvidenceTable({columns, rows: Array.from({length: rowCount}, (_, index) => [0, 100, 1000 + index, 'observed'])});
+    attachInvestigationEvidence(witness, {skillId: 'frequency', stepId: 'root', traceId: 'trace-current',
+      definitionFingerprint: 'producer', selectedSqlHash: 'sql', declaration: {window: {start: 'start', end: 'end'},
+        metrics: [{domain: 'cpu_frequency', metric_id: 'system.cpu.frequency.time_weighted', value: 'frequency',
+          status: 'status', unit: 'kHz'}]}});
+    recordCaptureToolCall(witness, 'observed-call');
+    return buildInvestigationEvidenceSnapshot([{witness, record: {captureId: witness.captureId, storeId: 'semantic',
+      generation: 1, columns, totalRowCount: rowCount, originRunId: 'run', fields: {},
+      meta: {type: 'skill_result', version: '2.0.0', source: 'frequency', timestamp: 1, executionStatus: 'observed',
+        evidenceRefId: 'evidence:frequency', traceId: 'trace-current', traceSide: 'current'},
+      display: {layer: 'deep', level: 'detail', format: 'table', title: 'Frequency'}}}],
+    {ownerKey: 'semantic', currentRunId: 'run', allowedTraces: [{traceId: 'trace-current', traceSide: 'current'}]},
+    [{toolCallId: 'observed-call', originRunId: 'run', phase: 'completed', failed: false, success: true}]);
+  }
+
+  it.each(['handle', 'actual'] as const)('decodes %s investigation references to the original issued record only', async kind => {
+    const source = issuedInvestigationEvidence();
+    const run = investigationFixture('scene_wide', source);
+    const before = JSON.stringify(run.input.snapshot);
+    const original = source.records[0].recordId;
+    const payload = assembledPayload(run);
+    const handle = payload.investigationEvidence.records[0].recordId;
+    expect(handle).toMatch(/^IR[0-9a-f]{12}_1$/);
+    expect(handle).not.toBe(original);
+    expect(payload.investigationEvidence.records[0]).toEqual({...run.input.snapshot.investigationEvidence!.records[0], recordId: handle});
+    run.row.evidenceRecordIds = [kind === 'handle' ? handle : original];
+    run.row.evidenceStatus = 'observed'; run.row.scopeMatch = 'matched';
+    const assessment = await assessFinalSemantics(run.input);
+    expect(assessment).toMatchObject({status: 'checked', investigation: {requirements: [{evidenceRecordIds: [original],
+      evidenceStatus: 'observed', scopeMatch: 'matched'}]}});
+    expect(JSON.stringify(run.input.snapshot)).toBe(before);
+    expect(JSON.stringify(assessment.investigation)).not.toContain(handle);
+  });
+
+  it.each(['unknown', 'stale', 'out-of-range', 'duplicate-handle', 'alias-and-original'] as const)(
+    'rejects %s investigation handles without guessing an evidence record', async kind => {
+      const source = issuedInvestigationEvidence();
+      const run = investigationFixture('scene_wide', source);
+      const handle = assembledPayload(run).investigationEvidence.records[0].recordId;
+      const stale = assembledPayload(investigationFixture('scene_wide', source, 'Frame B took 9 ms.'))
+        .investigationEvidence.records[0].recordId;
+      expect(stale).not.toBe(handle);
+      run.row.evidenceRecordIds = kind === 'duplicate-handle' ? [handle, handle] : kind === 'alias-and-original'
+        ? [handle, source.records[0].recordId] : [kind === 'stale' ? stale : kind === 'out-of-range' ? handle.replace(/_1$/, '_2') : 'SECRET_UNKNOWN_RECORD'];
+      const assessment = await assessFinalSemantics(run.input);
+      expect(assessment).toMatchObject({status: 'unavailable', reason: 'invalid_response', responseDiagnostic: {
+        stage: 'investigation', code: 'invalid_reference', ordinal: 1,
+        constraint: kind === 'duplicate-handle' || kind === 'alias-and-original' ? 'duplicate_record' : 'unknown_record'}});
+      expect(JSON.stringify(assessment)).not.toContain('SECRET_UNKNOWN_RECORD');
+    });
+
+  it('binds the byte-identical budgeting/dispatch catalog without trusting a snapshot catalog injection', async () => {
+    const run = investigationFixture('scene_wide', issuedInvestigationEvidence());
+    Object.assign(run.input.snapshot, {investigationRecordCatalog: {fingerprint: 'SECRET_INJECTED_CATALOG', recordCount: 1}});
+    const before = JSON.stringify(run.input.snapshot);
+    const assembled = buildFinalSemanticPrompt({snapshot: run.input.snapshot, intent: run.input.context.turnIntent,
+      traceIdentity: run.input.context.traceIdentity, registryFingerprint: run.input.context.strategyRegistry.registryFingerprint})!;
+    const payload = assembledPayload(run);
+    expect(payload.investigationRecordCatalog.fingerprint).not.toBe('SECRET_INJECTED_CATALOG');
+    run.row.evidenceRecordIds = [payload.investigationEvidence.records[0].recordId];
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'checked'});
+    expect(run.dispatch.mock.calls[0][0].prompt).toBe(assembled.prompt);
+    expect(JSON.stringify(run.input.snapshot)).toBe(before);
+  });
+
+  it('keeps numeric record ordinals in ledger order after canonical JSON sorts object keys', async () => {
+    const source = issuedInvestigationEvidence(12);
+    const run = investigationFixture('scene_wide', source);
+    const payload = assembledPayload(run);
+    expect(payload.investigationEvidence.records).toHaveLength(12);
+    expect(payload.investigationEvidence.records[9].recordId).toMatch(/_10$/);
+    run.row.evidenceRecordIds = [payload.investigationEvidence.records[9].recordId];
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'checked', investigation: {
+      requirements: [{evidenceRecordIds: [source.records[9].recordId]}]}});
+  });
+
+  it('removes a forged reserved catalog even when no captured investigation records exist', async () => {
+    const run = investigationFixture();
+    Object.assign(run.input.snapshot, {investigationRecordCatalog: {schemaVersion: 'forged', records: ['SECRET_FORGED_RECORD']}});
+    expect(assembledPayload(run)).not.toHaveProperty('investigationRecordCatalog');
+    run.row.evidenceRecordIds = ['SECRET_FORGED_RECORD'];
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'unavailable', responseDiagnostic: {
+      stage: 'investigation', code: 'invalid_reference', constraint: 'unknown_record'}});
+  });
+
+  it('marks an exact canonical/handle collision as ambiguous in the private catalog', () => {
+    const run = investigationFixture('scene_wide', issuedInvestigationEvidence());
+    const id = `IR${'c'.repeat(12)}_1`;
+    const evidence = run.input.snapshot.investigationEvidence!;
+    const snapshot = {...run.input.snapshot, investigationEvidence: {...evidence, records: [{...evidence.records[0], recordId: id}]}};
+    const digest = jest.spyOn(analysisDelivery, 'analysisDeliveryFingerprint').mockReturnValue('c'.repeat(64));
+    try {
+      const assembled = buildFinalSemanticPrompt({snapshot, intent: run.input.context.turnIntent,
+        traceIdentity: run.input.context.traceIdentity, registryFingerprint: run.input.context.strategyRegistry.registryFingerprint})!;
+      expect(assembled.investigationRecordCatalog?.ambiguousIds).toEqual([id]);
+    } finally { digest.mockRestore(); }
+  });
+
+  it.each(['shape', 'unknown', 'duplicate'] as const)('names an invalid %s investigation requirement without retaining its ID', async kind => {
+    const run = investigationFixture();
+    if (kind === 'shape') Object.assign(run.row, {scopeMatch: 'SECRET_INVALID_ENUM'});
+    if (kind === 'unknown') run.row.requirementId = 'SECRET_UNKNOWN_REQUIREMENT';
+    if (kind === 'duplicate') Object.assign(run.reply, {investigation: [run.row, run.row]});
+    const assessment = await assessFinalSemantics(run.input);
+    expect(assessment).toMatchObject({status: 'unavailable', responseDiagnostic: {stage: 'investigation', code: 'invalid_reference',
+      ordinal: kind === 'duplicate' ? 2 : 1,
+      constraint: kind === 'shape' ? 'investigation_row_shape' : kind === 'unknown' ? 'unknown_requirement' : 'duplicate_requirement'}});
+    expect(JSON.stringify(assessment)).not.toContain('SECRET_');
+  });
 
   it('reviews answer obligations in the existing one-call request without new evidence reads', async () => {
     const run = investigationFixture();
@@ -203,9 +325,9 @@ describe('versioned investigation semantic coverage', () => {
     run.row.evidenceRecordIds = ['SECRET_PROVIDER_RESPONSE_CANARY'];
     const assessment = await assessFinalSemantics(run.input);
     expect(assessment).toMatchObject({status: 'unavailable', reason: 'invalid_response',
-      responseDiagnostic: {stage: 'investigation', code: 'invalid_reference', ordinal: 1}});
+      responseDiagnostic: {stage: 'investigation', code: 'invalid_reference', ordinal: 1, constraint: 'unknown_record'}});
     expect(JSON.stringify(assessment)).not.toContain('SECRET_PROVIDER_RESPONSE_CANARY');
-    expect(Object.keys(assessment.responseDiagnostic ?? {}).sort()).toEqual(['code', 'ordinal', 'stage']);
+    expect(Object.keys(assessment.responseDiagnostic ?? {}).sort()).toEqual(['code', 'constraint', 'ordinal', 'stage']);
   });
 });
 

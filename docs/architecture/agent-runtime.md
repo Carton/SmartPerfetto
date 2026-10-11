@@ -357,6 +357,14 @@ Skill 的字面 `display.columns[].unit` 经过同一列类型/单位校验后�
 结果 `matched/mismatch/not_checked` 独立记录于 claim 的 `numericPresentation`，绑定
 canonical candidate、原声明指纹和捕获位置；不修改正文或机器命题。标识符不做显示舍入，
 计数保持整数，非零显示成零保持未核实。不支持或缺失的显示协议不能补出证明。
+模型可通过 `check_conclusion_draft` 对完整正文和声明做本地诊断。该工具复用当前
+run/session 授权下保留的证据和有限验证器，不采集新证据、不调用模型、不保存候选，
+也不证明正文覆盖或终态；最终验证仍由 finalizer 执行。行访问限制同样约束诊断。
+
+语义审查使用绑定当前快照、正文、Trace、registry 和 intent 的短证据 record handle。
+服务端严格还原原始 ledger ID；过期、未知、重复或歧义引用失败关闭。持久化评估
+仍保留原始 ID 和 provenance。
+
 `final_semantics@3` 接收这些结果，仍检查主体、范围、聚合、否定、比较和因果；
 模型同意不能覆盖确定的显示错误。只有审核问题精确位于已匹配数字内时，数值争议才
 记为 `numeric_presentation_review_disagreement` 并保持 partial；其他语义错误不降级。

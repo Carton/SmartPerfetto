@@ -393,6 +393,9 @@ function createDeferred<T = void>() {
 }
 
 function createTestServer(options: {
+  runId?: string;
+  canInvokeTool?: () => boolean;
+  runAuthorization?: any;
   referenceTraceId?: string;
   sceneType?: any;
   lightweight?: boolean;
@@ -508,6 +511,9 @@ function createTestServer(options: {
     knowledgeScope: options.knowledgeScope,
     durableLearning: options.durableLearning,
     sessionId: options.sessionId,
+    runId: options.runId,
+    canInvokeTool: options.canInvokeTool,
+    runAuthorization: options.runAuthorization,
     outputLanguage: options.outputLanguage,
     runManifestAttributionSink: options.runManifestAttributionSink,
     analysisHistoryReader: options.analysisHistoryReader,
@@ -802,6 +808,53 @@ describe('createClaudeMcpServer', () => {
   });
 
   describe('tool registration', () => {
+    it('exposes bounded diagnostic-only draft feedback within the existing-only tool scope', async () => {
+      const {ArtifactStore: RealArtifactStore} = jest.requireActual('../artifactStore') as typeof import('../artifactStore');
+      const {toolDefinitions, mockTpService, mockSkillExecutor, emittedUpdates, artifactStore} = createTestServer({
+        runId: 'diagnostic-run', sessionId: 'diagnostic-session', allowNewEvidence: false, artifactStore: new RealArtifactStore()});
+      const definition = toolDefinitions.find(item => item.name === 'check_conclusion_draft')!;
+      expect(definition.exposure).toBe('internal');
+      expect(definition.evidenceEffect).toBe('read_existing');
+      expect(definition.shared.description.length).toBeLessThanOrEqual(1000);
+      expect(definition.shared.description).toContain('coverageNotChecked');
+      expect(definition.shared.description).toContain('never final verification');
+      const before = JSON.stringify(artifactStore.serialize());
+      const result = await definition.shared.handler({body: 'Draft', declarationJson: '{}'}, {});
+      expect(JSON.parse((result.content[0] as {text: string}).text)).toMatchObject({diagnosticOnly: true, coverageNotChecked: true,
+        finalCertification: false, reason: 'invalid_declaration'});
+      expect(mockTpService.query).not.toHaveBeenCalled();
+      expect(mockSkillExecutor.execute).not.toHaveBeenCalled();
+      expect(emittedUpdates).toEqual([]);
+      expect(JSON.stringify(artifactStore.serialize())).toBe(before);
+    });
+    it.each([
+      {artifactStore: null, reason: 'evidence_store_missing'},
+      {runId: undefined, reason: 'run_context_missing'},
+      {conversationTraceAttached: false, reason: 'trace_not_attached'},
+      {userQuery: 'Do not read raw rows.', reason: 'artifact_row_access_restricted'},
+      {userQuery: 'Read summary first.', reason: 'artifact_row_access_restricted'},
+    ])('refuses unavailable or restricted draft evidence: %j', async settings => {
+      const {reason, ...options} = settings;
+      const server = createTestServer({runId: 'diagnostic-run', sessionId: 'diagnostic-session', ...options});
+      const definition = server.toolDefinitions.find(item => item.name === 'check_conclusion_draft')!;
+      const result = await definition.shared.handler({body: 'Draft', declarationJson: '{}'}, {});
+      expect(JSON.parse((result.content[0] as {text: string}).text)).toMatchObject({state: 'unavailable', reason, finalCertification: false});
+      expect(server.mockTpService.query).not.toHaveBeenCalled();
+    });
+    it('cannot read draft evidence after the lease closes or authorization is revoked', async () => {
+      const closed = createTestServer({runId: 'run', sessionId: 'session', canInvokeTool: () => false});
+      const closedResult = await closed.toolDefinitions.find(item => item.name === 'check_conclusion_draft')!.shared.handler(
+        {body: 'Draft', declarationJson: '{}'}, {});
+      expect(JSON.parse((closedResult.content[0] as {text: string}).text)).toMatchObject({unsupportedReason: 'acquisition_closed'});
+      const assertCurrentInTurn = jest.fn(() => {throw new Error('authorization_revoked');});
+      const revoked = createTestServer({runId: 'run', sessionId: 'session', runAuthorization: {
+        enforced: true, assertCurrentInTurn, settled: async () => {},
+      }});
+      await expect(revoked.toolDefinitions.find(item => item.name === 'check_conclusion_draft')!.shared.handler(
+        {body: 'Draft', declarationJson: '{}'}, {})).rejects.toThrow('authorization_revoked');
+      expect(revoked.mockTpService.query).not.toHaveBeenCalled();
+    });
+
     it('should register the full MCP toolset (range guard, not exact count)', () => {
       // Asserting an exact count breaks every time we add or retire a tool;
       // assert a sane range plus the must-have anchors so a regression that

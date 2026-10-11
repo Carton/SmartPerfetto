@@ -24,7 +24,7 @@ import {isPlainJsonObject} from '../utils/isPlainJsonObject';
 import {resolveAnalysisInvestigationRequirements} from '../agentRuntime/analysisInvestigationRequirements';
 import type {AnalysisInvestigationRequirement, ResolvedAnalysisInvestigationRequirements} from '../types/analysisInvestigation';
 import type {InvestigationContentAssessment} from '../types/analysisInvestigationAssessment';
-import {compactInvestigationEvidenceForSemantic,
+import {compactInvestigationEvidenceForSemantic, LEDGER_RECORD_BUDGET,
   type CompactInvestigationEvidenceSnapshot} from './evidence/investigationEvidenceLedger';
 import {FINAL_SEMANTIC_INPUT_BYTE_LIMIT, FINAL_SEMANTIC_OUTPUT_BYTE_LIMIT} from './finalSemanticLimits';
 import {fixedReportRequirementApplicability} from './finalReportContractGate';
@@ -159,7 +159,8 @@ export interface FinalSemanticResponseDiagnostic {
   readonly expectedCount?: number;
   readonly actualCount?: number;
   readonly constraint?: 'scene_wide_applicability' | 'non_applicable_coverage' |
-    'content_location_required' | 'observed_evidence_required';
+    'content_location_required' | 'observed_evidence_required' | 'investigation_row_shape' |
+    'unknown_requirement' | 'duplicate_requirement' | 'unknown_record' | 'duplicate_record' | 'ambiguous_record';
 }
 
 export interface FinalSemanticInputDiagnostic {
@@ -495,6 +496,39 @@ function wholeBodyCovered(locations: readonly SemanticContentLocation[], length:
 }
 type FinalSemanticPromptContext = Pick<CapturedSnapshot, 'snapshot' | 'intent' | 'traceIdentity' | 'registryFingerprint'>;
 
+interface SemanticInvestigationRecordCatalog {
+  readonly payload: {readonly schemaVersion: 'final_semantic_investigation_record_catalog@1';
+    readonly fingerprint: string; readonly recordCount: number};
+  readonly aliases: Readonly<Record<string, string>>;
+  readonly handles: readonly string[];
+  readonly ambiguousIds: readonly string[];
+}
+
+/** Snapshot-bound transport handles only; original evidence and its authority stay untouched. */
+function buildInvestigationRecordCatalog(captured: FinalSemanticPromptContext): SemanticInvestigationRecordCatalog | undefined {
+  const evidence = captured.snapshot.investigationEvidence;
+  if (!evidence) return undefined;
+  if (evidence.records.length > LEDGER_RECORD_BUDGET) throw new Error('invalid_snapshot');
+  const fingerprint = analysisDeliveryFingerprint({evidence, bodyFingerprint: analysisDeliveryFingerprint(captured.snapshot.body),
+    traceIdentity: captured.traceIdentity, registryFingerprint: captured.registryFingerprint, intent: captured.intent});
+  const aliases: Record<string, string> = Object.create(null);
+  const handles: string[] = [];
+  const originalIds = evidence.records.map(item => item.recordId);
+  const originalSet = new Set(originalIds);
+  const ambiguousIds = new Set<string>();
+  const seen = new Set<string>();
+  for (const [index, item] of evidence.records.entries()) {
+    const alias = `IR${fingerprint.slice(0, 12)}_${index + 1}`;
+    handles.push(alias);
+    aliases[alias] = item.recordId;
+    if (originalSet.has(alias)) ambiguousIds.add(alias);
+    if (seen.has(item.recordId)) ambiguousIds.add(item.recordId);
+    seen.add(item.recordId);
+  }
+  return freezeJson({payload: {schemaVersion: 'final_semantic_investigation_record_catalog@1', fingerprint,
+    recordCount: evidence.records.length}, aliases, handles, ambiguousIds: [...ambiguousIds]});
+}
+
 function fixedInvestigationApplicability(requirement: AnalysisInvestigationRequirement,
   scope: CapturedSnapshot['intent']['scope']): 'applicable' | undefined {
   return scope === 'scene_wide' && !requirement.condition ? 'applicable' : undefined;
@@ -502,7 +536,8 @@ function fixedInvestigationApplicability(requirement: AnalysisInvestigationRequi
 
 /** Single prompt assembly path shared by exact budgeting and dispatch. */
 export function buildFinalSemanticPrompt(captured: FinalSemanticPromptContext):
-  {prompt: string; promptFingerprint: string; locationCatalog?: SemanticLocationCatalog} | undefined {
+  {prompt: string; promptFingerprint: string; locationCatalog?: SemanticLocationCatalog;
+    investigationRecordCatalog?: SemanticInvestigationRecordCatalog} | undefined {
   const template = (loadPromptTemplate('prompt-final-semantic-assessment') ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
   if (!template) return undefined;
   const promptFingerprint = createHash('sha256').update(template).digest('hex');
@@ -510,6 +545,7 @@ export function buildFinalSemanticPrompt(captured: FinalSemanticPromptContext):
   // the byte-identical request even when their input objects used different key order.
   const normalized: FinalSemanticPromptContext = freezeJson(captured);
   const locationCatalog = buildSemanticLocationCatalog(normalized.snapshot.body);
+  const investigationRecordCatalog = buildInvestigationRecordCatalog(normalized);
   const {reason: _reason, ...intentData} = normalized.intent;
   const prompt = `${template}\n\n${JSON.stringify({
     request: 'final_semantic_request@1', bodyUtf16Length: normalized.snapshot.body.length,
@@ -519,6 +555,10 @@ export function buildFinalSemanticPrompt(captured: FinalSemanticPromptContext):
     // JSON.stringify omits undefined, so a failed/oversized derived catalog also
     // removes any untrusted same-name snapshot property.
     contentLocationCatalog: locationCatalog?.payload,
+    investigationRecordCatalog: investigationRecordCatalog?.payload,
+    investigationEvidence: normalized.snapshot.investigationEvidence ? {...normalized.snapshot.investigationEvidence,
+      records: normalized.snapshot.investigationEvidence.records.map((item, index) =>
+        ({...item, recordId: investigationRecordCatalog!.handles[index]}))} : undefined,
     fixedRequirementApplicability: normalized.snapshot.reportRequirements?.requirements.map(requirement => ({
       requirementId: requirement.id,
       applicability: fixedReportRequirementApplicability(requirement, normalized.intent.scope) ?? 'semantic_decision',
@@ -528,7 +568,8 @@ export function buildFinalSemanticPrompt(captured: FinalSemanticPromptContext):
       applicability: fixedInvestigationApplicability(requirement, normalized.intent.scope) ?? 'semantic_decision',
     })),
   })}`;
-  return {prompt, promptFingerprint, ...(locationCatalog ? {locationCatalog} : {})};
+  return {prompt, promptFingerprint, ...(locationCatalog ? {locationCatalog} : {}),
+    ...(investigationRecordCatalog ? {investigationRecordCatalog} : {})};
 }
 
 function semanticResponseJsonText(raw: string): string {
@@ -609,6 +650,7 @@ function parseClaimItem(item: Record<string, unknown>, claimId: string, ordinal:
 function parseResponseStrict(
   raw: string, captured: CapturedSnapshot, binding: NonNullable<FinalSemanticAssessment['binding']>,
   locationCatalog?: SemanticLocationCatalog,
+  investigationRecordCatalog?: SemanticInvestigationRecordCatalog,
 ):
   FinalSemanticAssessment {
   let value: unknown;
@@ -714,7 +756,7 @@ function parseResponseStrict(
   if (seenRequirements.size !== requirementMap.size) return invalidResponse('report_requirement_set', 'set_mismatch', {
     expectedCount: requirementMap.size, actualCount: seenRequirements.size,
   });
-  const investigation = parseInvestigationResponse(value, captured, locationFormat, locationCatalog);
+  const investigation = parseInvestigationResponse(value, captured, locationFormat, locationCatalog, investigationRecordCatalog);
   // Coverage of the claims the review owns: the declaration's valid claims. A
   // partially valid declaration (per-item failures only) can still cover them
   // completely; a root-level failure keeps its own ineligible reason.
@@ -746,9 +788,10 @@ function parseResponseStrict(
 function parseResponse(
   raw: string, captured: CapturedSnapshot, binding: NonNullable<FinalSemanticAssessment['binding']>,
   locationCatalog?: SemanticLocationCatalog,
+  investigationRecordCatalog?: SemanticInvestigationRecordCatalog,
 ):
   {assessment?: FinalSemanticAssessment; diagnostic?: FinalSemanticResponseDiagnostic} {
-  try { return {assessment: parseResponseStrict(raw, captured, binding, locationCatalog)}; }
+  try { return {assessment: parseResponseStrict(raw, captured, binding, locationCatalog, investigationRecordCatalog)}; }
   catch (error) {
     if (error instanceof SemanticResponseParseFailure) return {diagnostic: error.diagnostic};
     throw error;
@@ -759,6 +802,7 @@ function parseInvestigationResponse(
   value: Record<string, unknown>, captured: CapturedSnapshot,
   locationFormat: 'offsets_with_text' | 'exact_quote' | 'catalog_or_exact_quote',
   locationCatalog?: SemanticLocationCatalog,
+  investigationRecordCatalog?: SemanticInvestigationRecordCatalog,
 ):
   NonNullable<FinalSemanticAssessment['investigation']> {
   if (!member(value.schemaVersion, ['final_semantic_response@3', 'final_semantic_response@4'])) {
@@ -769,19 +813,39 @@ function parseInvestigationResponse(
   const required = pin?.status === 'resolved' ? pin.requirements : [];
   const definitions = new Map(required.map(item => [item.id, item]));
   const records = new Set(captured.snapshot.investigationEvidence?.records.map(item => item.recordId) ?? []);
+  const ambiguousRecords = new Set(investigationRecordCatalog?.ambiguousIds ?? []);
   const seen = new Set<string>();
   const rows: InvestigationContentAssessment[] = [];
   for (const [index, item] of value.investigation.entries()) {
     if (!record(item) || !keys(item, ['requirementId', 'applicability', 'coverage', 'contentLocations',
       'evidenceRecordIds', 'scopeMatch', 'evidenceStatus']) || !nonempty(item.requirementId) ||
-      !definitions.has(item.requirementId) || seen.has(item.requirementId) ||
       !member(item.applicability, ['applicable', 'not_applicable', 'unknown']) ||
       !member(item.coverage, ['covered', 'missing', 'unknown']) ||
       !member(item.scopeMatch, ['matched', 'mismatched', 'unknown']) ||
       !member(item.evidenceStatus, ['observed', 'insufficient', 'not_checked', 'failed', 'not_applicable', 'unknown']) ||
-      !Array.isArray(item.evidenceRecordIds) || item.evidenceRecordIds.some(id => !nonempty(id) || !records.has(id)) ||
-      new Set(item.evidenceRecordIds).size !== item.evidenceRecordIds.length) {
-      return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1});
+      !Array.isArray(item.evidenceRecordIds)) {
+      return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1, constraint: 'investigation_row_shape'});
+    }
+    if (!definitions.has(item.requirementId)) return invalidResponse('investigation', 'invalid_reference',
+      {ordinal: index + 1, constraint: 'unknown_requirement'});
+    if (seen.has(item.requirementId)) return invalidResponse('investigation', 'invalid_reference',
+      {ordinal: index + 1, constraint: 'duplicate_requirement'});
+    const evidenceRecordIds: string[] = [];
+    const referenced = new Set<string>();
+    for (const id of item.evidenceRecordIds) {
+      if (!nonempty(id)) return invalidResponse('investigation', 'invalid_reference',
+        {ordinal: index + 1, constraint: 'unknown_record'});
+      const alias = investigationRecordCatalog?.aliases[id];
+      if (ambiguousRecords.has(id) || (alias !== undefined && ambiguousRecords.has(alias))) {
+        return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1, constraint: 'ambiguous_record'});
+      }
+      const originalId = alias ?? (records.has(id) ? id : undefined);
+      if (originalId === undefined || !records.has(originalId)) return invalidResponse('investigation', 'invalid_reference',
+        {ordinal: index + 1, constraint: 'unknown_record'});
+      if (referenced.has(originalId)) return invalidResponse('investigation', 'invalid_reference',
+        {ordinal: index + 1, constraint: 'duplicate_record'});
+      referenced.add(originalId);
+      evidenceRecordIds.push(originalId);
     }
     const locations = parseLocations(item.contentLocations, captured.snapshot.body, locationFormat, locationCatalog);
     const definition = definitions.get(item.requirementId)!;
@@ -799,7 +863,7 @@ function parseInvestigationResponse(
     if (constraint) return invalidResponse('investigation', 'invalid_constraint', {ordinal: index + 1, constraint});
     seen.add(item.requirementId);
     rows.push({requirementId: item.requirementId, applicability: item.applicability, coverage: item.coverage,
-      contentLocations: locations, evidenceRecordIds: item.evidenceRecordIds as string[],
+      contentLocations: locations, evidenceRecordIds,
       scopeMatch: item.scopeMatch, evidenceStatus: item.evidenceStatus});
   }
   if (seen.size !== definitions.size) return invalidResponse('investigation_set', 'set_mismatch', {
@@ -872,7 +936,7 @@ export function assessFinalSemantics(input: FinalSemanticAssessmentInput): Promi
     try { assembled = buildFinalSemanticPrompt(captured); }
     catch { return fail('unavailable', 'missing_template'); }
     if (!assembled) return fail('unavailable', 'missing_template');
-    const {prompt, promptFingerprint, locationCatalog} = assembled;
+    const {prompt, promptFingerprint, locationCatalog, investigationRecordCatalog} = assembled;
     const promptBytes = Buffer.byteLength(prompt, 'utf8');
     if (promptBytes > inputBytes) return emptyAssessment('coverage_incomplete', 'input_limit', binding, undefined,
       {stage: 'prompt_assembly', code: 'byte_limit_exceeded', limitBytes: inputBytes, actualBytes: promptBytes});
@@ -908,7 +972,7 @@ export function assessFinalSemantics(input: FinalSemanticAssessmentInput): Promi
           response.reason, transportDetail);
       }
       if (Buffer.byteLength(response.text, 'utf8') > outputBytes) return fail('coverage_incomplete', 'output_limit');
-      const parsed = parseResponse(response.text, captured, binding, locationCatalog);
+      const parsed = parseResponse(response.text, captured, binding, locationCatalog, investigationRecordCatalog);
       if (parsed.diagnostic) {
         const {stage, code, ordinal, constraint} = parsed.diagnostic;
         console.log(`[FinalSemanticAssessment] response rejected: stage=${stage} code=${code}` +

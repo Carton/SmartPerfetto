@@ -4,6 +4,7 @@
 
 import type {RunAuthorizationCheck} from '../agentRuntime/runAuthorizationFence';
 import {createRuntimeToolResult, runtimeToolReceiptMetadata} from '../agentRuntime/runtimeToolResult';
+import {diagnoseConclusionDraft, draftDiagnosticOwnerKey, DRAFT_DECLARATION_MAX_BYTES} from '../services/draftDeclarationDiagnostics';
 import {assertSceneRuntimeCapability} from '../agent/scene/sceneRuntimeBinding';
 import {sceneRunState, type SceneRunContext} from '../agent/scene/sceneRunContext';
 import {projectSceneRunCandidate} from '../agent/scene/sceneTimelineProjection';
@@ -7673,6 +7674,32 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
   registry.registerSdk(recallSimilarResult, 'recall_similar_result', 'public', {evidenceEffect: 'acquire'});
   if (writeAnalysisNote) registry.registerSdk(writeAnalysisNote, 'write_analysis_note', 'internal', {evidenceEffect: 'none'});
   if (fetchArtifact) registry.registerSdk(fetchArtifact, 'fetch_artifact', 'public', {evidenceEffect: 'read_existing'});
+  const checkConclusionDraft = tool(
+    'check_conclusion_draft', requireToolDescription('prompt-draft-declaration-diagnostics-tool-description'),
+    {body: z.string().max(DRAFT_DECLARATION_MAX_BYTES), declarationJson: z.string().max(DRAFT_DECLARATION_MAX_BYTES)},
+    async ({body, declarationJson}, extra) => {
+      const refusal = (reason: string) => createRuntimeToolResult({diagnosticOnly: true, coverageNotChecked: true,
+        finalCertification: false, state: 'unavailable', reason, success: false}, {isError: true});
+      if (options.conversationTraceAttached === false) return refusal('trace_not_attached');
+      if (artifactAccessPolicy.forbidRows || artifactAccessPolicy.requireSummaryBeforeRows ||
+          artifactAccessPolicy.forbidRowsWhenSummaryComplete) return refusal('artifact_row_access_restricted');
+      const runId = options.runId, sessionId = options.sessionId;
+      const readView = typeof artifactStore?.createEvidenceReadView === 'function' && runId && sessionId ? artifactStore.createEvidenceReadView({
+        currentRunId: runId, ownerKey: draftDiagnosticOwnerKey(runId, sessionId),
+        allowedTraces: [{traceId, traceSide: 'current'}, ...(options.referenceTraceId
+          ? [{traceId: options.referenceTraceId, traceSide: 'reference' as const}] : [])],
+      }) : undefined;
+      const diagnostic = await diagnoseConclusionDraft({body, declarationJson, runId, sessionId, readView,
+        signal: (extra as {signal?: AbortSignal} | undefined)?.signal,
+        assertCurrent: () => {
+          options.runAuthorization?.assertCurrentInTurn();
+          if (options.canInvokeTool?.() === false) throw new Error('draft_read_context_closed');
+        }});
+      return createRuntimeToolResult({...diagnostic, success: diagnostic.state === 'diagnosed'},
+        {isError: diagnostic.state !== 'diagnosed'});
+    }, {annotations: {readOnlyHint: true}},
+  );
+  registry.registerSdk(checkConclusionDraft, 'check_conclusion_draft', 'internal', {evidenceEffect: 'read_existing'});
   if (readSessionHistory) registry.registerSdk(readSessionHistory, 'read_session_history', 'public', {evidenceEffect: 'read_existing'});
   if (submitPlan) registry.registerSdk(submitPlan, 'submit_plan', 'internal', {evidenceEffect: 'none'});
   if (updatePlanPhase) registry.registerSdk(updatePlanPhase, 'update_plan_phase', 'internal', {evidenceEffect: 'none'});

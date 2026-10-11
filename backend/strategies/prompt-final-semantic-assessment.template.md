@@ -151,6 +151,15 @@ requirement. The record's origin distinguishes current acquisition from reused
 evidence: do not describe reused records as newly queried. A missing record or
 unknown origin is not proof of an executed check. No tool names, titles, plan
 completion or the answer's self-description establish acquisition.
+When `investigationRecordCatalog` is supplied, the server has replaced each
+`investigationEvidence.records[].recordId` with a short snapshot-bound handle
+such as `IR0123456789ab_1`. Copy that exact current `recordId` handle into
+`evidenceRecordIds`. The server decodes it to the retained original record ID;
+the handle supplies no evidence, identity, scope, coverage or verification.
+Do not construct handles, reuse another request's handles or copy record IDs
+from history. All other record fields and the original ledger fingerprint retain
+their supplied meanings. This transport catalog is distinct from the body
+location catalog and does not change either requirement ID namespace.
 Copy only `recordId` values from `investigationEvidence.records`; claim IDs,
 evidenceRefIds, artifactIds, captureIds, spanIds and metricIds are different
 namespaces. When no supplied record addresses a requirement, use an empty

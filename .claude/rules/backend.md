@@ -319,6 +319,14 @@ Keep these boundaries intact:
   same progress-aware budget (`CLAUDE_MAX_RUN_TIMEOUT_MS`), without a timeout
   delivery call; non-scene Claude runs, Pi, OpenCode and Qoder still use fixed
   budgets.
+- `check_conclusion_draft` diagnoses a complete body and declaration against
+  retained evidence under the current run/session authorization. It cannot
+  acquire evidence, call a model, persist or admit a candidate, certify coverage,
+  or write terminal state. Row-access restrictions also apply to diagnostics.
+- Semantic investigation record handles are bound to the exact snapshot,
+  body, trace, registry and intent. Decode only issued handles or unambiguous
+  original IDs; unknown, stale, duplicate and ambiguous references fail closed.
+  Stored assessments retain original ledger IDs and provenance.
 - The semantic review response degrades per item, never upward. Location ids
   are short (`L<line>.<digest prefix>`) but still resolved exactly per request.
   An item the parser cannot use becomes `unknown`; an `inconsistent` judgment
