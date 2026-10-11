@@ -78,6 +78,11 @@ negation, comparisons and causality. Never turn a matched display into proof of
 those meanings or of body coverage. A mismatched/not-checked row cannot be
 overridden by your agreement. Preserve all semantic issues; locate a purely
 numeric dispute on the numeric literal itself, not an entire sentence.
+For each matched row, review every listed body location in context and return
+claim-level `contentLocations` covering all of them using the legal span/quote
+forms below; one reviewed span may cover several locations. If any
+location cannot be checked, report `unknown`. Global `bodyCoverage`, matching
+values, or review of another occurrence cannot supply these claim locations.
 
 For displays without such a binding, an exact equivalent needs no approximation marker. Discarding decimal digits
 requires `约`, `≈`, `~`, `about`, `approximately`, or stated rounding to N decimals.
