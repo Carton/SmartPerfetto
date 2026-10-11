@@ -817,6 +817,7 @@ describe('createClaudeMcpServer', () => {
       expect(definition.evidenceEffect).toBe('read_existing');
       expect(definition.shared.description.length).toBeLessThanOrEqual(1000);
       expect(definition.shared.description).toBe(requireToolDescription('prompt-draft-declaration-diagnostics-tool-description'));
+      expect(definition.shared.description).toContain('Full body+JSON string claim batches');
       expect(definition.shared.description).not.toContain('Report labels');
       expect(definition.shared.description).toContain('coverageNotChecked');
       expect(definition.shared.description).toContain('never final verification');
