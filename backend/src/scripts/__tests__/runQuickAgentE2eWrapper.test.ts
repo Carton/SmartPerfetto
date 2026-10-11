@@ -561,6 +561,49 @@ describe('GLM Coding Plan E2E explicit output limit', () => {
   });
 });
 
+describe('GLM Coding Plan Pi explicit thinking fence', () => {
+  beforeEach(() => {
+    const environment: NodeJS.ProcessEnv = {...process.env, GLM_BASE_URL: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      GLM_MODEL: 'glm-5.3', GLM_LIGHT_MODEL: 'glm-5.3-flash'};
+    delete environment.SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON;
+    delete environment.SMARTPERFETTO_OPENCODE_MODEL_JSON;
+    delete environment.OPENAI_MAX_OUTPUT_TOKENS;
+    jest.replaceProperty(process, 'env', environment);
+  });
+  afterEach(() => jest.restoreAllMocks());
+  const pinned = () => JSON.parse(buildChildEnv('test-key', 'pi-agent-core', '/tmp/pi-thinking-fence').SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON!);
+  const configured = (value: unknown) => {
+    process.env.SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON = JSON.stringify(value);
+    return buildChildEnv('test-key', 'pi-agent-core', '/tmp/pi-thinking-fence');
+  };
+  it('keeps the default unchanged and accepts an explicit supported low level without changing capabilities or budgets', () => {
+    const model = pinned();
+    expect(model).not.toHaveProperty('thinkingLevel');
+    const child = configured({...model, thinkingLevel: 'low'});
+    expect(JSON.parse(child.SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON!)).toEqual({...model, thinkingLevel: 'low'});
+    expect(child.OPENAI_MAX_OUTPUT_TOKENS).toBeUndefined();
+    expect(child.SMARTPERFETTO_PI_AGENT_CORE_REQUEST_TIMEOUT_MS).toBe(process.env.SMARTPERFETTO_PI_AGENT_CORE_REQUEST_TIMEOUT_MS);
+    expect(child.AGENT_FULL_REQUEST_TIMEOUT_MS).toBe(process.env.AGENT_FULL_REQUEST_TIMEOUT_MS);
+  });
+  it.each(['not-a-level', 'minimal', null, 42])('rejects unsupported or malformed thinkingLevel %j', thinkingLevel => {
+    expect(() => configured({...pinned(), thinkingLevel})).toThrow('Pi thinkingLevel is not supported by the installed SDK model');
+  });
+  it.each([
+    ['baseUrl', 'https://open.bigmodel.cn/api/paas/v4'], ['baseUrl', 'https://other.example/api/coding/paas/v4'],
+    ['id', 'glm-5.3-flash'], ['provider', 'zai'], ['apiKeyEnv', 'OPENAI_API_KEY'],
+    ['contextWindow', 2_000_000], ['maxTokens', 2048], ['reasoning', false],
+    ['compat', {thinkingFormat: 'zai', supportsReasoningEffort: false}], ['thinkingBudgets', {low: 1024}],
+  ])('still refuses a %s change under an explicit supported level', (field, value) => {
+    expect(() => configured({...pinned(), thinkingLevel: 'low', [field as string]: value}))
+      .toThrow('Pi model JSON must match the pinned GLM Coding Plan configuration');
+  });
+  it('does not extend the OpenCode fence to accept thinking controls', () => {
+    process.env.SMARTPERFETTO_OPENCODE_MODEL_JSON = JSON.stringify({providerID: 'zai-coding-cn', modelID: 'glm-5.3',
+      baseURL: 'https://open.bigmodel.cn/api/coding/paas/v4', apiKeyEnv: 'GLM_API_KEY', smallModel: 'glm-5.3-flash', thinkingLevel: 'low'});
+    expect(() => buildChildEnv('test-key', 'opencode', '/tmp/pi-thinking-fence')).toThrow('OpenCode model JSON must match');
+  });
+});
+
 describe('GLM Coding Plan canonical E2E provider boundary', () => {
   const wrapper = require(path.join(backendRoot, 'scripts/run-glm-agent-e2e.cjs'));
   afterEach(() => jest.restoreAllMocks());

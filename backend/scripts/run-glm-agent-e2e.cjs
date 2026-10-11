@@ -625,11 +625,20 @@ function glmCodingConfiguration(env = process.env, provider = 'zai-coding-cn') {
   return {provider, baseUrl: `${parsed.origin}/api/coding/paas/v4`, model, lightModel};
 }
 
-function assertPinnedModelJson(override, pinned, runtime) {
+function assertPinnedModelJson(override, pinned, runtime, supportedThinkingLevels) {
   if (override) {
     let parsed;
     try { parsed = JSON.parse(override); } catch {}
+    let authoredThinkingLevel;
+    if (supportedThinkingLevels && parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.hasOwn(parsed, 'thinkingLevel')) {
+      const {thinkingLevel, ...model} = parsed;
+      if (typeof thinkingLevel !== 'string' || !supportedThinkingLevels.includes(thinkingLevel.trim()))
+        throw new Error('Pi thinkingLevel is not supported by the installed SDK model');
+      authoredThinkingLevel = thinkingLevel.trim();
+      parsed = model;
+    }
     if (!isDeepStrictEqual(parsed, JSON.parse(pinned))) throw new Error(`${runtime} model JSON must match the pinned GLM Coding Plan configuration`);
+    if (authoredThinkingLevel !== undefined) return JSON.stringify({...JSON.parse(pinned), thinkingLevel: authoredThinkingLevel});
   }
   return pinned;
 }
@@ -1623,9 +1632,10 @@ function buildChildEnv(apiKey, runtimeKind, isolatedRoot) {
       ...baseEnv,
       SMARTPERFETTO_AGENT_RUNTIME: 'pi-agent-core',
       SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON:
-        assertPinnedModelJson(process.env.SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON, createPiAgentCoreGlmModelJson({
+        createPiAgentCoreGlmModelJson({
           model: glmModel, baseUrl: glmBaseUrl,
-        }), 'Pi'),
+          override: process.env.SMARTPERFETTO_PI_AGENT_CORE_MODEL_JSON,
+        }),
     };
   }
 
@@ -1660,15 +1670,16 @@ function buildChildEnv(apiKey, runtimeKind, isolatedRoot) {
   throw new Error(`Unsupported runtime: ${runtimeKind}`);
 }
 
-function createPiAgentCoreGlmModelJson({ model, baseUrl }) {
+function createPiAgentCoreGlmModelJson({ model, baseUrl, override }) {
   // The SDK public provider entrypoint is import-only. An offline ESM child
   // preserves this synchronous CLI without reading SDK-private JSON layouts or
   // inventing model capabilities. getModels does not refresh or contact a provider.
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `
     import {zaiCodingCnProvider} from '@earendil-works/pi-ai/providers/zai-coding-cn';
+    import {getSupportedThinkingLevels} from '@earendil-works/pi-ai';
     const model = zaiCodingCnProvider().getModels().find(candidate => candidate.id === process.argv[1]);
     if (!model) process.exitCode = 2;
-    else process.stdout.write(JSON.stringify(model));
+    else process.stdout.write(JSON.stringify({model, supportedThinkingLevels: getSupportedThinkingLevels(model)}));
   `, '--', model], {
     cwd: backendRoot,
     encoding: 'utf8',
@@ -1681,14 +1692,15 @@ function createPiAgentCoreGlmModelJson({ model, baseUrl }) {
   if (result.error || result.status !== 0) {
     throw new Error('Unable to read the installed GLM Coding Plan SDK model catalog');
   }
-  let catalogModel;
-  try { catalogModel = JSON.parse(result.stdout); } catch {}
+  let catalogModel, supportedThinkingLevels;
+  try { ({model: catalogModel, supportedThinkingLevels} = JSON.parse(result.stdout)); } catch {}
   if (catalogModel?.id !== model || catalogModel.provider !== 'zai-coding-cn' ||
       !Number.isSafeInteger(catalogModel.contextWindow) || catalogModel.contextWindow <= 0 ||
-      !Number.isSafeInteger(catalogModel.maxTokens) || catalogModel.maxTokens <= 0) {
+      !Number.isSafeInteger(catalogModel.maxTokens) || catalogModel.maxTokens <= 0 ||
+      !Array.isArray(supportedThinkingLevels) || !supportedThinkingLevels.every(level => typeof level === 'string')) {
     throw new Error('Invalid model metadata from the installed Pi SDK');
   }
-  return JSON.stringify({...catalogModel, baseUrl, apiKeyEnv: 'GLM_API_KEY'});
+  return assertPinnedModelJson(override, JSON.stringify({...catalogModel, baseUrl, apiKeyEnv: 'GLM_API_KEY'}), 'Pi', supportedThinkingLevels);
 }
 
 function assertFile(filePath, label) {

@@ -561,13 +561,28 @@ It never falls back to DeepSeek or a generic `OPENAI_API_KEY`.
 - OpenAI receives explicit `OPENAI_*` model/endpoint pins and
   `OPENAI_AGENTS_PROTOCOL=chat_completions`. Pi uses the installed
   `zai-coding-cn` catalog's native capabilities; OpenCode receives pinned GLM
-  model JSON. Conflicting model JSON overrides are refused.
+  model JSON. Conflicting model JSON overrides are refused. A Pi override may
+  add only an explicit top-level `thinkingLevel` to the complete pinned model
+  JSON; the installed SDK's public supported-level list validates it. For
+  example, `low` is accepted only when that model supports it. Provider, model,
+  Coding Plan endpoint, credential variable and every catalog capability must
+  remain identical. Omitting the field keeps provider-default main reasoning;
+  the runner never selects `low` or `off` automatically.
 - Provider-default main reasoning and native output limits remain unchanged.
   There is no implicit main-answer output cap; an explicit
   `OPENAI_MAX_OUTPUT_TOKENS` must be a positive safe integer.
 - `all`/`all-glm` selects OpenAI, Pi and OpenCode for normal suites. Runs are
   sequential; when coordinating separate runs, use at most two runtimes at
   once to avoid subscription throttling.
+
+The wrapper's `--timeout-ms` controls the outer SSE observation, not each model
+request or the native run budget; its default remains 1200000 ms. Set an
+explicit observation timeout that covers the actual configured run and its
+finalization. OpenAI's progress-aware run can use up to
+`OPENAI_MAX_RUN_TIMEOUT_MS` (default 3600000 ms), whereas Pi's fixed native
+`SMARTPERFETTO_PI_AGENT_CORE_REQUEST_TIMEOUT_MS` / `AGENT_FULL_REQUEST_TIMEOUT_MS`
+defaults to 1200000 ms. A longer observation changes neither native budget nor
+strict acceptance; it cannot make a partial or timed-out result pass.
 
 Keep keys in shell variables or ignored local env files. The old DeepSeek CLI
 and npm names stop with a migration message; they never silently run GLM.
