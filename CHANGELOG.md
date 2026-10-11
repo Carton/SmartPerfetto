@@ -31,6 +31,8 @@ Detailed commit-level history is available via `git log`.
 - Count equivalence, wait-chain evidence citations and delivery budgeting preserve their evidence, identity and privacy boundaries.
 - Investigation records retain distinct issued artifact identities, and snapshot-bound short references preserve the original ledger provenance.
 - Runtime tool transport preserves schema-declared JSON strings and emits complete unit and evidence guidance within existing description budgets.
+- Malformed reserved declaration comments remain ineligible but enter bounded strict repair without duplicating their payload in the answer body.
+- OpenCode can spend its existing full-mode delivery reserve after a native output limit leaves no answer, retaining the original deadline, provider and strict completion checks.
 
 ### Changed
 

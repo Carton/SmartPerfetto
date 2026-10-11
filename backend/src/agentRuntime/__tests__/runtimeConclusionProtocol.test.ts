@@ -222,6 +222,35 @@ describe('runtime native declaration completion', () => {
       candidate: altered.replace('```json', '```JSON ')})).toBeUndefined();
   });
 
+  it('repairs quarantined reserved framing only while preserving all original claim and proposal fingerprints', () => {
+    const exactClaim = claim('a', {semantics: {...semantics, numeric: {operator: 'eq', value: 7, unit: 'ns'}}});
+    const proposal = {schemaVersion: 'evidence_relation_candidate@1', id: 'proposal:ratio', kind: 'derived',
+      direction: 'subject_to_object', subject: {evidenceRefId: 'data:subject', rowIndex: 0, column: 'running_ns', value: 5},
+      object: {evidenceRefId: 'data:object', rowIndex: 0, column: 'wall_ns', value: 10}, metricColumn: 'running_ns', value: 0.5, unit: 'ratio'};
+    const payload = {...inspectCandidateProtocol(contract([exactClaim, claim('b')])).sidecar.rawPayload as Record<string, unknown>,
+      relationProposals: [proposal]};
+    const malformed = `<!-- smartperfetto:conclusion_contract@1\n${JSON.stringify(payload)}\n-->`;
+    const original = `${body}\n${malformed}`;
+    const inspected = inspectCandidateProtocol(original);
+    expect(inspected).toMatchObject({status: 'invalid', canonicalBody: `${body}\n`,
+      sidecar: {bindingEligibility: 'ineligible', rawPayload: payload, issues: [{code: 'invalid_framing', path: '$'}]}});
+    expect(inspected.sidecar.contract).toBeUndefined();
+    expect(recoverNativeDeclarationPayload(original)).toEqual(payload);
+    const request = repair(original)!;
+    expect(request.declaredClaimIds).toEqual(['a', 'b']);
+    expect(request.declaredRelationIds).toEqual(['proposal:ratio']);
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: JSON.stringify(payload)})!;
+    expect(inspectCandidateProtocol(accepted)).toMatchObject({status: 'valid', canonicalBody: expect.stringContaining(body),
+      sidecar: {rawPayload: payload}});
+    for (const changed of [
+      {...payload, claims: [claim('b')]},
+      {...payload, claims: [claim('a', {semantics: {...semantics, numeric: {operator: 'eq', value: 8, unit: 'ns'}}}), claim('b')]},
+      {...payload, relationProposals: []},
+      {...payload, relationProposals: [{...proposal, value: 0.6}]},
+    ]) expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: JSON.stringify(changed)})).toBeUndefined();
+    expect(inspectCandidateProtocol(original).status).toBe('invalid');
+  });
+
   it('keeps root validation and both output limits after transport reframing', () => {
     const valid = contract([claim('a'), claim('b')]);
     const malformed = valid.replace('```json\n', '').replace('\n```\n', '\n');

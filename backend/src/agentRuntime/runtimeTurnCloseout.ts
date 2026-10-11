@@ -7,6 +7,9 @@ import type {OutputLanguage} from '../agentv3/outputLanguage';
 import {projectToolResultForExternalSurface} from '../services/rag/toolResultProjectionFilter';
 import {decodeRuntimeToolResult, readRuntimeToolResultFacts} from './runtimeToolResult';
 import type {RuntimeToolObserver} from './runtimeToolObserver';
+import type {AnalysisTurnIntent} from './analysisTurnIntent';
+import {buildNativeOutputCompletionPrompt} from './runtimeConclusionProtocol';
+import {buildCandidateProtocolDiagnostic, inspectCandidateProtocol} from '../services/canonicalAnalysisResult';
 
 /** The last model call belongs to delivery; one-turn configurations cannot add a call. */
 export function resolveRuntimeTurnBudget(maxTurns: number) {
@@ -103,6 +106,9 @@ export function createRuntimeTurnCloseoutTape(options: {maxBytes?: number} = {})
   };
   /** At least one call returned data that survived projection; an unreadable result gives a delivery call nothing. */
   const hasReturnedData = () => [...entries.values()].some(entry => entry.state === 'returned' && entry.returnedData !== undefined);
+  const returnedData = () => ({kind: 'current_run_returned_data_excerpts',
+    completeTranscript: false, verified: false, modelConsumptionKnown: false,
+    omittedCalls, unavailableResults, entries: [...entries.values()]});
   const render = (templateName: string, input: DeliveryPromptInput,
     extra: Record<string, string> = {}): string | undefined => {
     let template: string | undefined;
@@ -113,9 +119,7 @@ export function createRuntimeTurnCloseoutTape(options: {maxBytes?: number} = {})
       ...extra,
       original_query: boundedText(input.query, 6000),
       prior_conclusion: boundedText(input.priorConclusion, 8000),
-      returned_data: JSON.stringify({kind: 'current_run_returned_data_excerpts',
-        completeTranscript: false, verified: false, modelConsumptionKnown: false,
-        omittedCalls, unavailableResults, entries: [...entries.values()]}),
+      returned_data: JSON.stringify(returnedData()),
     });
   };
   const buildPrompt = (input: DeliveryPromptInput & {
@@ -130,5 +134,15 @@ export function createRuntimeTurnCloseoutTape(options: {maxBytes?: number} = {})
    */
   const buildEmptyBodyPrompt = (input: DeliveryPromptInput): string | undefined =>
     hasReturnedData() ? render('prompt-runtime-empty-body-continuation', input) : undefined;
-  return {observe, buildPrompt, buildEmptyBodyPrompt, hasReturnedData};
+  const buildOutputLimitPrompt = (input: DeliveryPromptInput & {intent: AnalysisTurnIntent}): string | undefined => {
+    if (!hasReturnedData() || input.priorConclusion.trim()) return undefined;
+    return buildNativeOutputCompletionPrompt({candidate: input.priorConclusion, intent: input.intent,
+      diagnostic: buildCandidateProtocolDiagnostic(inspectCandidateProtocol(input.priorConclusion), 'native', 1),
+      outputLanguage: input.outputLanguage ?? 'zh-CN',
+      issues: [{type: 'missing_check', severity: 'error', recoveryKind: 'continue_output',
+        message: JSON.stringify({nativeCompletion: {status: 'incomplete', reason: 'output_limit'},
+          originalQuery: boundedText(input.query, 6000), returnedData: returnedData()})}],
+    });
+  };
+  return {observe, buildPrompt, buildEmptyBodyPrompt, buildOutputLimitPrompt, hasReturnedData};
 }

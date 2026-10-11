@@ -186,6 +186,20 @@ describe('exact native prose semantic input receipt', () => {
 });
 
 describe('canonical analysis result projection', () => {
+  it('quarantines a malformed reserved declaration without supplying claims or authorizing its raw payload', () => {
+    const payload = declaration();
+    const raw = `Visible body.\n<!-- smartperfetto:conclusion_contract@1\n${JSON.stringify(payload)}\n-->`;
+    const source = result(raw);
+    const canonical = canonicalizeAnalysisResult(source, {context: contextFor(source)});
+    expect(canonical.result.conclusion).toBe('Visible body.\n');
+    expect(canonical.bindingEligibility).toBe('ineligible');
+    expect(canonical.validationContract).toBeUndefined();
+    expect(canonical.result.conclusionContract).toBeUndefined();
+    expect(canonical.result.claimVerificationResult).toBeUndefined();
+    expect(inspectCandidateProtocol(source.conclusion).sidecar.rawPayload).toEqual(payload);
+    expect(source.conclusion).toBe(raw);
+  });
+
   it('preserves a long final answer and every declared measurement beyond display preview limits', () => {
     const contract = declaration();
     contract.claims = Array.from({length: 240}, (_, index) => ({

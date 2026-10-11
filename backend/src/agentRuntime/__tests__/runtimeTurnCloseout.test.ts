@@ -6,6 +6,7 @@ import {describe, expect, it} from '@jest/globals';
 import {createRuntimeTurnCloseoutTape, resolveRuntimeTurnBudget} from '../runtimeTurnCloseout';
 import {createRuntimeToolResult, runtimeToolReceiptMetadata} from '../runtimeToolResult';
 import {DEFAULT_EXTERNAL_TOOL_RESULT_MAX_CHARS, summarizeExternalToolResult} from '../runtimeLimits';
+import type {AnalysisTurnIntent} from '../analysisTurnIntent';
 
 interface PromptData {
   kind: string;
@@ -53,6 +54,23 @@ describe('runtime closeout budget', () => {
 });
 
 describe('runtime closeout returned-data tape', () => {
+  it.each(['en', 'zh-CN'] as const)('builds an output-limit completion from projected returned data in %s', async outputLanguage => {
+    const tape = createRuntimeTurnCloseoutTape();
+    const intent = {schemaVersion: 1, status: 'resolved', taskKind: 'fact', sceneId: 'general',
+      scope: 'bounded_question', deliverable: 'answer', evidenceAccess: 'read_new'} as AnalysisTurnIntent;
+    expect(tape.buildOutputLimitPrompt({...question, outputLanguage, intent})).toBeUndefined();
+    await tape.observe({...invocation, phase: 'completed', result: createRuntimeToolResult({rows: [{value: 7}]})});
+    const prompt = tape.buildOutputLimitPrompt({...question, outputLanguage, intent})!;
+    const line = prompt.split('\n').find(text => text.startsWith('{"recoveryKinds"'))!;
+    const context = JSON.parse(JSON.parse(line).issues[0].message);
+    expect(context.nativeCompletion).toEqual({status: 'incomplete', reason: 'output_limit'});
+    expect(context.originalQuery).toBe(question.query);
+    expect(context.returnedData).toMatchObject({completeTranscript: false, verified: false,
+      modelConsumptionKnown: false, entries: [{state: 'returned', returnedData: {rows: [{value: 7}]}}]});
+    expect(prompt).toContain(outputLanguage === 'en' ? 'do not append an unfinished JSON tail' : '不追加未写完的 JSON 尾部');
+    expect(tape.buildOutputLimitPrompt({...question, intent, priorConclusion: 'Existing answer'})).toBeUndefined();
+  });
+
   it('retains actual values and producer phase facts beyond the external transport excerpt', async () => {
     const tape = createRuntimeTurnCloseoutTape();
     const result = createRuntimeToolResult({

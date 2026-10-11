@@ -366,6 +366,7 @@ function createNativeIntentHarness(input: {
   nativeError?: boolean;
   closeoutAnswer?: string;
   closeoutError?: boolean;
+  closeoutFinish?: string;
   mainMessages?: Record<string, unknown>[];
   /** Replaces the main session's default newest-first window and always-busy status. */
   mainSession?: {
@@ -374,6 +375,7 @@ function createNativeIntentHarness(input: {
   };
   beforeClassifierReply?: () => Promise<void>;
   beforeAnswerReply?: () => Promise<void>;
+  beforeCloseoutReply?: () => void;
   /** Runs when the main session is created: after its prompt (and history) is rendered, before the prompt is sent. */
   onMainSessionCreate?: () => void;
   env?: Record<string, string>;
@@ -432,8 +434,9 @@ function createNativeIntentHarness(input: {
               }};
             }
             if (index > 1) {
+              input.beforeCloseoutReply?.();
               if (input.closeoutError) throw new Error('closeout provider failure');
-              return noToolReply = {data: {info: {id: 'closeout-message', role: 'assistant', finish: 'stop',
+              return noToolReply = {data: {info: {id: 'closeout-message', role: 'assistant', finish: input.closeoutFinish ?? 'stop',
                 time: {completed: Date.now()}, modelID: 'main-model'},
                 parts: [{type: 'text', text: input.closeoutAnswer ?? 'The cause remains unknown; ask about the main-thread interval.'}]}};
             }
@@ -751,6 +754,84 @@ describe('OpenCode native turn intent and delivery', () => {
     it('does not continue when the run has no delivery call left', async () => withBackendDataDir(async () => {
       const {harness} = await run({closeoutAnswer: 'Unreached.', env: {AGENT_MAX_TURNS: '1'}});
       expect(harness.prompts).toHaveLength(2);
+    }));
+  });
+
+  describe('native output-limit delivery', () => {
+    const body = 'The root cause remains unverified.';
+    const complete = `${body}\n${renderConclusionContractSidecar({schemaVersion: 'conclusion_contract_v1',
+      mode: 'focused_answer', conclusions: [], clusters: [], evidenceChain: [], claims: [],
+      uncertainties: ['Root cause not established.'], nextSteps: []})}`;
+    const run = async (input: Parameters<typeof createNativeIntentHarness>[0] = {}, mode: 'full' | 'fast' = 'full') => {
+      let harness!: ReturnType<typeof createNativeIntentHarness>;
+      harness = createNativeIntentHarness({answer: '', finish: 'length', closeoutAnswer: complete, ...input,
+        beforeAnswerReply: async () => {
+          harness.traceProcessor.query.mockResolvedValue({columns: ['value'], rows: [[7]], durationMs: 1});
+          const sql = harness.getTools().find(tool => tool.name === 'execute_sql');
+          await sql.shared.handler({sql: 'SELECT 7 AS value'});
+          await input.beforeAnswerReply?.();
+        }});
+      const result = await harness.runtime.analyze('Inspect the returned value', 'opencode-output-limit',
+        'trace-opencode', {analysisMode: mode});
+      return {harness, result};
+    };
+
+    it('uses the one reserved call for a full strict answer under the same pins and deadline', async () => withBackendDataDir(async () => {
+      const {harness, result} = await run();
+      expect(harness.prompts).toHaveLength(3);
+      expect(Object.values(harness.prompts[2].body.tools).every(value => value === false)).toBe(true);
+      expect(harness.prompts[2].body.model).toEqual(harness.prompts[1].body.model);
+      const prompt = harness.prompts[2].body.parts[0].text;
+      expect(prompt).toContain('output_limit');
+      expect(prompt).toContain('current_run_returned_data_excerpts');
+      expect(prompt).toContain('SELECT 7 AS value');
+      expect(prompt).not.toContain('finished normally');
+      const protocol = inspectCandidateProtocol(result.conclusion);
+      expect(protocol.status).toBe('valid');
+      expect(protocol.canonicalBody.trim()).toBe(body);
+      expect(result.completion).toMatchObject({status: 'completed', sdkFinishReason: 'stop',
+        conclusionFingerprint: analysisDeliveryFingerprint(result.conclusion)});
+      expect(result.rounds).toBe(2);
+      const context = finalizationContext.takeFinalizationContext(result)!;
+      try {
+        expect(context.getNativeDeclaration(result, new AbortController().signal)?.raw).toBe(complete);
+        const call = mockOpenCodeIntentTransport.mock.calls.find(([input]) => input.purpose === undefined)!;
+        expect(call[0].deadlineMs).toBe(context.deadlineMs);
+      } finally {context.dispose();}
+      expect(harness.serverCloses.every(close => close.mock.calls.length === 1)).toBe(true);
+    }));
+
+    it.each([
+      ['length again', {closeoutFinish: 'length'}],
+      ['missing declaration', {closeoutAnswer: body}],
+      ['failed call', {closeoutError: true}],
+    ])('preserves the original incomplete receipt when delivery has %s', async (_name, input) => withBackendDataDir(async () => {
+      const {harness, result} = await run(input);
+      expect(harness.prompts).toHaveLength(3);
+      expect(result.conclusion).toBe('');
+      expect(result.completion).toMatchObject({status: 'incomplete', reason: 'output_limit', sdkFinishReason: 'length'});
+      expect(result.rounds).toBe(2);
+      finalizationContext.takeFinalizationContext(result)?.dispose();
+    }));
+
+    it.each(['quick', 'zero reserve', 'native error'] as const)('does not dispatch for %s', async kind => withBackendDataDir(async () => {
+      const {harness, result} = await run(kind === 'zero reserve' ? {env: {AGENT_MAX_TURNS: '1'}}
+        : kind === 'native error' ? {nativeError: true} : {}, kind === 'quick' ? 'fast' : 'full');
+      expect(harness.prompts).toHaveLength(2);
+      expect(result.conclusion).toBe('');
+      expect(result.completion?.status).not.toBe('completed');
+      finalizationContext.takeFinalizationContext(result)?.dispose();
+    }));
+
+    it('does not accept a delivery response after the original deadline', async () => withBackendDataDir(async () => {
+      const clock = jest.spyOn(Date, 'now');
+      try {
+        const {harness, result} = await run({beforeCloseoutReply: () => clock.mockReturnValue(Date.now() + 3_600_001)});
+        expect(harness.prompts).toHaveLength(3);
+        expect(result.conclusion).toBe('');
+        expect(result.completion).toMatchObject({status: 'incomplete', reason: 'output_limit', sdkFinishReason: 'length'});
+        finalizationContext.takeFinalizationContext(result)?.dispose();
+      } finally {clock.mockRestore();}
     }));
   });
 

@@ -379,6 +379,10 @@ export interface ConclusionContract {
 
 const SIDECAR_MARKER = '<!-- smartperfetto:conclusion-contract@1';
 const SIDECAR_PREFIX = '<!-- smartperfetto:conclusion-contract@';
+const RESERVED_COMMENT_PREFIX = '<!-- smartperfetto:';
+// Temporary recognition bound only, matching the existing 64 KiB declaration
+// output budget. This neither changes runtime caps nor admits marker aliases.
+const RESERVED_COMMENT_QUARANTINE_MAX_BYTES = 64 * 1024;
 /** Shared prompt framing; injected only after developer comments are stripped. */
 export const CONCLUSION_CONTRACT_SIDECAR_MARKER = SIDECAR_MARKER;
 const ROOT_PARSER_FIELDS = [
@@ -903,6 +907,18 @@ export interface ConclusionSidecarMachineSegment {
   startLine: number;
   /** -1 means the explicit machine segment was interrupted. */
   endLine: number;
+  /** A quarantined declaration remains invalid until strict canonical repair. */
+  quarantinedPayload?: unknown;
+}
+
+function reservedCommentDeclaration(text: string): unknown {
+  const match = /^<!-- smartperfetto:([A-Za-z0-9_@.-]+)[ \t]*\r?\n([\s\S]*)\r?\n-->$/.exec(text);
+  if (!match || match[1].startsWith('conversation-control')) return undefined;
+  try {
+    const payload: unknown = JSON.parse(match[2]);
+    return payload && typeof payload === 'object' && !Array.isArray(payload) &&
+      (payload as {schemaVersion?: unknown}).schemaVersion === 'conclusion_contract_v1' ? payload : undefined;
+  } catch {return undefined;}
 }
 
 function newSidecarLineState() {
@@ -916,8 +932,9 @@ function newSidecarLineState() {
 
 /**
  * The shared framing grammar for final parsing and live narrative projection.
- * Only a possible line-start marker and one CR are withheld. Machine payloads
- * and visible prose are never retained; line/fence recognition uses counters.
+ * Canonical markers use constant state and never retain their machine payload.
+ * An ambiguous reserved comment is withheld only within a bounded temporary
+ * buffer until its entire JSON declaration is confirmed; otherwise it is prose.
  */
 export class ConclusionSidecarFramingScanner {
   private line = newSidecarLineState();
@@ -930,6 +947,7 @@ export class ConclusionSidecarFramingScanner {
   private pendingCr = false;
   private ended = false;
   private markers = 0;
+  private reservedComment: {text: string; bytes: number; start: number; startLine: number} | undefined;
 
   constructor(private readonly onMachineSegment?: (segment: ConclusionSidecarMachineSegment) => void) {}
 
@@ -937,7 +955,7 @@ export class ConclusionSidecarFramingScanner {
 
   /** Diagnostic of text awaiting disambiguation, independent of answer length. */
   get bufferedCharacterCount(): number {
-    return this.line.pendingPrefix.length + (this.pendingCr ? 1 : 0);
+    return this.line.pendingPrefix.length + (this.reservedComment?.text.length ?? 0) + (this.pendingCr ? 1 : 0);
   }
 
   write(text: string): string {
@@ -969,6 +987,10 @@ export class ConclusionSidecarFramingScanner {
       visible += this.consumeCharacter('\r');
     }
     visible += this.endLine('');
+    if (this.reservedComment) {
+      visible += this.reservedComment.text;
+      this.reservedComment = undefined;
+    }
     if (this.machineStart) this.emitSegment(this.offset, -1);
     this.ended = true;
     return visible;
@@ -978,6 +1000,7 @@ export class ConclusionSidecarFramingScanner {
     this.line = newSidecarLineState();
     this.offset = this.lineStart = this.lineIndex = this.markers = 0;
     this.fence = this.machineStart = undefined;
+    this.reservedComment = undefined;
     this.htmlComment = this.pendingCr = this.ended = false;
   }
 
@@ -992,6 +1015,10 @@ export class ConclusionSidecarFramingScanner {
       this.consumeFenceCharacter(character);
     }
 
+    if (this.reservedComment) {
+      line.prefixIndex = -1;
+      return this.consumeReservedComment(character);
+    }
     if (this.fence || this.htmlComment) return character;
     if (line.prefixIndex >= 0) {
       if (character === SIDECAR_PREFIX[line.prefixIndex]) {
@@ -1004,12 +1031,48 @@ export class ConclusionSidecarFramingScanner {
         } else if (!this.machineStart) line.pendingPrefix += character;
         return '';
       }
+      if (!this.machineStart && line.pendingPrefix.startsWith(RESERVED_COMMENT_PREFIX)) {
+        const text = line.pendingPrefix;
+        this.reservedComment = {text, bytes: Buffer.byteLength(text, 'utf8'), start: this.lineStart, startLine: this.lineIndex};
+        line.pendingPrefix = '';
+        line.prefixIndex = -1;
+        return this.consumeReservedComment(character);
+      }
       line.prefixIndex = -1;
     }
     if (this.machineStart) return '';
     const visible = line.pendingPrefix + character;
     line.pendingPrefix = '';
     return visible;
+  }
+
+  private consumeReservedComment(text: string): string {
+    const candidate = this.reservedComment!;
+    candidate.text += text;
+    // UTF-16 surrogate halves conservatively cost three UTF-8 bytes each.
+    // The bound is independent of chunking and never retains more than 64 KiB.
+    for (let index = 0; index < text.length; index++) {
+      const code = text.charCodeAt(index);
+      candidate.bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : 3;
+    }
+    if (candidate.bytes > RESERVED_COMMENT_QUARANTINE_MAX_BYTES) {
+      this.reservedComment = undefined;
+      this.htmlComment = true; // Do not recognize a nested marker after overflow.
+      return candidate.text;
+    }
+    return '';
+  }
+
+  private finishReservedComment(): string {
+    const candidate = this.reservedComment!;
+    this.reservedComment = undefined;
+    const payload = this.line.length === 3 && this.line.equalsTerminator
+      ? reservedCommentDeclaration(candidate.text) : undefined;
+    if (payload === undefined) return candidate.text;
+    this.markers++;
+    this.onMachineSegment?.({start: candidate.start, end: this.lineStart + this.line.length, startLine: candidate.startLine,
+      endLine: this.lineIndex, quarantinedPayload: payload});
+    return '';
   }
 
   private consumeFenceCharacter(character: string): void {
@@ -1034,8 +1097,12 @@ export class ConclusionSidecarFramingScanner {
 
   private endLine(newline: string): string {
     const line = this.line;
+    const reservedWasPending = this.reservedComment !== undefined;
     let visible = line.pendingPrefix;
-    if (this.machineStart) {
+    if (this.reservedComment) {
+      // Only a complete line can establish that --> has no trailing prose.
+      visible += line.hasCommentClose ? this.finishReservedComment() + newline : this.consumeReservedComment(newline);
+    } else if (this.machineStart) {
       if (line.length === 3 && line.equalsTerminator) {
         this.emitSegment(this.lineStart + line.length, this.lineIndex);
       }
@@ -1050,7 +1117,7 @@ export class ConclusionSidecarFramingScanner {
     } else if (/^ {0,3}<!--/.test(line.startText) && !line.hasCommentClose) {
       this.htmlComment = true;
     }
-    if (!this.machineStart) visible += newline;
+    if (!this.machineStart && !reservedWasPending) visible += newline;
     this.line = newSidecarLineState();
     this.lineStart = this.offset;
     this.lineIndex++;
@@ -1067,10 +1134,10 @@ export class ConclusionSidecarFramingScanner {
 /** Recognize explicit top-level sidecars without interpreting ordinary prose. */
 export function parseConclusionContractSidecar(raw: string): ConclusionContractSidecarParseResult {
   const lines = raw.split(/\r?\n/);
-  const markers: Array<{start: number; end: number}> = [];
+  const markers: Array<{start: number; end: number; quarantinedPayload?: unknown}> = [];
   const machineSegments: Array<{start: number; end: number}> = [];
   const scanner = new ConclusionSidecarFramingScanner(segment => {
-    markers.push({start: segment.startLine, end: segment.endLine});
+    markers.push({start: segment.startLine, end: segment.endLine, quarantinedPayload: segment.quarantinedPayload});
     machineSegments.push({start: segment.start, end: segment.end});
   });
   const narrative = scanner.write(raw) + scanner.finish();
@@ -1080,6 +1147,8 @@ export function parseConclusionContractSidecar(raw: string): ConclusionContractS
   if (markerCount !== 1) return {...base, status: 'invalid', bindingEligibility: 'ineligible',
     issues: [{code: 'duplicate_marker', path: '$'}]};
   const marker = markers[0];
+  if (marker.quarantinedPayload !== undefined) return {...base, rawPayload: marker.quarantinedPayload,
+    status: 'invalid', bindingEligibility: 'ineligible', issues: [{code: 'invalid_framing', path: '$'}]};
   if (marker.end < 0 || lines[marker.start] !== SIDECAR_MARKER || lines[marker.start + 1] !== '```json' ||
     lines[marker.end - 1] !== '```') return {...base, status: 'invalid', bindingEligibility: 'ineligible',
     issues: [{code: 'invalid_framing', path: '$'}]};

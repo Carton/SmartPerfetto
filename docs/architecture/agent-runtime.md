@@ -246,6 +246,8 @@ artifact、capture 与 queryReview；但它不是模型工具调用：不进 Run
 
 声明 JSON 本身不算可读交付。Pi 已完成但只有声明的候选使用同一预留交付机会补写正文，保留已有 claim 数量与 ID；已有可读正文不因缺少标题而续写。完整闭合的单个畸形声明可隔离修复，但原文截断或重复 marker 不走声明专用修复。修复后仍须通过严格解析和独立核验。
 
+共享正文扫描器对规范 marker 保持常量状态。对于列首、独占行的其他 `smartperfetto:` 注释，最多暂存 64 KiB；只有独占闭合行内含唯一完整 `conclusion_contract_v1` JSON 对象时才隔离为 `invalid_framing/ineligible`，保留原始声明供已有修复矩阵检查。这个识别缓冲不增加原生输出额度，也不接受 marker 别名。普通说明、conversation-control、引用/代码示例、嵌套、截断或超出缓冲的注释仍原样保留；流式和最终解析使用同一语法。
+
 OpenAI 的采集截止时间可随实际进展延后，但不侵占预留交付和 finalization 预算；
 采集超时且已有返回数据时可在交付预算内做一次无工具收尾，结果保留 `partial/timeout`，
 不追加模型语义审核。收尾或声明补交失败时保留原候选；取消、硬 deadline 到期、授权失效

@@ -86,6 +86,7 @@ import { getExtendedKnowledgeBase } from '../../../services/sqlKnowledgeBase';
 import {dispatchWithModelCallRecord, openAiTextRequestPurposeFor} from '../../intentTransport';
 import {admitDeliveryCall, deliveryCallFailsOpen} from '../../../services/runtimeCallStats';
 import {projectToolResultForExternalSurface} from '../../../services/rag/toolResultProjectionFilter';
+import {inspectCandidateProtocol} from '../../../services/canonicalAnalysisResult';
 import {finalizeOwnerSourceAwareAnalysisResultWithProjection} from '../../../services/codebase/sourceClaimVerifier';
 import { getProviderService, type ProviderConfig, type ProviderScope } from '../../../services/providerManager';
 import {providerSubprocessEnv} from '../../../services/providerManager/envIsolation';
@@ -2867,10 +2868,17 @@ export class OpenCodeRuntime extends EventEmitter implements IOrchestrator {
     let deliveryCallSpent = false;
     const remainingDeliveryTurns = () => !turnLimitReached && !deliveryCallSpent && actualTurns < turnBudget.totalTurns
       ? turnBudget.deliveryTurns : 0;
-    const continuationPrompt = Date.now() < deadlineMs && nativeBodyCompletionNeeded({intent: turnIntent,
-      completion: {status: openCodeMessageNativelyCompleted(acceptedMessage) ? 'completed' : 'unknown'},
-      candidate: conclusion, remainingDeliveryTurns: remainingDeliveryTurns()})
-      ? closeoutTape.buildEmptyBodyPrompt({query, priorConclusion: conclusion, outputLanguage}) : undefined;
+    const nativeInfo = acceptedMessage && (isRecord(acceptedMessage.info) ? acceptedMessage.info : acceptedMessage);
+    const outputLimitDelivery = turnPolicy.budgetMode === 'full' && turnIntent.taskKind !== 'acknowledgement'
+      && nativeInfo?.finish === 'length' && nativeInfo.error == null && !conclusion.trim()
+      && Array.isArray(acceptedMessage?.parts) && !acceptedMessage.parts.some(part =>
+        isRecord(part) && part.type === 'tool') && remainingDeliveryTurns() > 0;
+    const continuationPrompt = Date.now() >= deadlineMs ? undefined : outputLimitDelivery
+      ? closeoutTape.buildOutputLimitPrompt({query, priorConclusion: conclusion, outputLanguage, intent: turnIntent})
+      : nativeBodyCompletionNeeded({intent: turnIntent,
+        completion: {status: openCodeMessageNativelyCompleted(acceptedMessage) ? 'completed' : 'unknown'},
+        candidate: conclusion, remainingDeliveryTurns: remainingDeliveryTurns()})
+        ? closeoutTape.buildEmptyBodyPrompt({query, priorConclusion: conclusion, outputLanguage}) : undefined;
     const deliveryCall = {providerOrigin: openCodeProviderBaseUrl(modelConfig), model: modelConfig.model.modelID};
     const admitDelivery = (purpose: 'continuation' | 'declaration_repair', prompt: string) =>
       admitDeliveryCall(options.runManifestAttributionSink?.runtimePerformanceRecorder, {...deliveryCall, purpose,
@@ -2884,13 +2892,17 @@ export class OpenCodeRuntime extends EventEmitter implements IOrchestrator {
         assertActive();
         actualTurns++;
         const continued = await dispatchWithModelCallRecord(options.runManifestAttributionSink?.runtimePerformanceRecorder,
-          {purpose: 'continuation', trigger: 'empty_body', ...deliveryCall},
+          {purpose: 'continuation', trigger: outputLimitDelivery ? 'output_limit' : 'empty_body', ...deliveryCall},
           {prompt: continuationPrompt, systemPrompt: prep.systemPrompt, signal: executionLease.signal, deadlineMs,
             outputByteLimit: 64 * 1024},
           input => runOpenCodeIntentTransport({...input, model: modelConfig.model,
             createClassifierHost: createNoToolsHost, beforeDispatch}));
         assertActive();
-        if (continued.status === 'ok' && candidateHasAnswerBody(continued.text)) {
+        const completedOutputLimit = continued.status === 'ok' &&
+          ['stop', 'end_turn', 'stop_sequence'].includes(continued.finishReason ?? '') &&
+          inspectCandidateProtocol(continued.text).sidecar.status === 'valid';
+        if (continued.status === 'ok' && candidateHasAnswerBody(continued.text) &&
+            (!outputLimitDelivery || completedOutputLimit)) {
           conclusion = continued.text;
           attemptId = crypto.randomUUID();
           acceptedMessage = {info: {role: 'assistant', finish: continued.finishReason ?? 'stop'},
