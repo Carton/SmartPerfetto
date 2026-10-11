@@ -135,4 +135,11 @@ describe('draft declaration diagnostics', () => {
     expect(await diagnoseConclusionDraft({...f.input, body: '汉'.repeat(DRAFT_DECLARATION_MAX_BYTES)}))
       .toMatchObject({reason: 'input_budget_or_body_invalid'});
   });
+  it.each([{}, [], null, 42, undefined])('rejects unexpected input types without crashing: %j', async invalid => {
+    const f = fixture();
+    for (const field of ['body', 'declarationJson']) {
+      expect(await diagnoseConclusionDraft({...f.input, [field]: invalid}))
+        .toMatchObject({state: 'invalid_input', reason: 'input_type_invalid', finalCertification: false});
+    }
+  });
 });

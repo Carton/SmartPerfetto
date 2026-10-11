@@ -582,16 +582,27 @@ export function normalizeRuntimeToolArgs(
   value: unknown,
   inputSchema?: z.ZodRawShape,
 ): unknown {
-  const normalized = normalizeRuntimeToolArgValue(value);
+  const normalized = normalizeRuntimeToolArgValue(value, inputSchema);
   return inputSchema && normalized && typeof normalized === 'object' && !Array.isArray(normalized)
     ? dropOptionalPlaceholders(normalized as Record<string, unknown>, inputSchema)
     : normalized;
 }
 
-function normalizeRuntimeToolArgValue(value: unknown): unknown {
+function requiresStringInput(field: z.ZodRawShape[string] | undefined): boolean {
+  if (!field) return false;
+  try {
+    // Use the original input schema: adapter-safe schemas encode open records
+    // as strings too, but those still require JSON-container normalization.
+    return z.toJSONSchema(field, {io: 'input'}).type === 'string';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeRuntimeToolArgValue(value: unknown, inputSchema?: z.ZodRawShape): unknown {
   if (typeof value === 'string') {
     const parsed = parseJsonContainerString(value);
-    return parsed === value ? value : normalizeRuntimeToolArgValue(parsed);
+    return parsed === value ? value : normalizeRuntimeToolArgValue(parsed, inputSchema);
   }
 
   if (Array.isArray(value)) {
@@ -603,7 +614,9 @@ function normalizeRuntimeToolArgValue(value: unknown): unknown {
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, normalizeRuntimeToolArgValue(nested)]),
+    Object.entries(value).map(([key, nested]) => [key,
+      typeof nested === 'string' && requiresStringInput(inputSchema?.[key])
+        ? nested : normalizeRuntimeToolArgValue(nested)]),
   );
 }
 

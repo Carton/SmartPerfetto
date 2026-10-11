@@ -13,7 +13,7 @@ import {runClaimVerification} from './verifier/claimVerificationRunner';
 
 export const DRAFT_DECLARATION_MAX_BYTES = 65_536;
 const boundary = {diagnosticOnly: true, coverageNotChecked: true, finalCertification: false} as const;
-type DiagnosticInput = {body: string; declarationJson: string; runId?: string; sessionId?: string;
+type DiagnosticInput = {body: unknown; declarationJson: unknown; runId?: string; sessionId?: string;
   readView?: EvidenceReadView; signal?: AbortSignal; assertCurrent?: () => void};
 export const draftDiagnosticOwnerKey = (runId: string, sessionId: string) =>
   `draft-declaration:${analysisDeliveryFingerprint({runId, sessionId})}`;
@@ -29,11 +29,14 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
   const scope = input.readView.investigationEvidence?.();
   if (!isIssuedInvestigationEvidenceSnapshot(scope) || scope.currentRunId !== input.runId ||
       scope.ownerKey !== draftDiagnosticOwnerKey(input.runId, input.sessionId)) return unavailable('read_context_mismatch');
-  if (!input.body.trim() || Buffer.byteLength(input.body, 'utf8') > DRAFT_DECLARATION_MAX_BYTES ||
-      Buffer.byteLength(input.declarationJson, 'utf8') > DRAFT_DECLARATION_MAX_BYTES)
+  const {body, declarationJson} = input;
+  if (typeof body !== 'string' || typeof declarationJson !== 'string')
+    return {...boundary, state: 'invalid_input' as const, reason: 'input_type_invalid'};
+  if (!body.trim() || Buffer.byteLength(body, 'utf8') > DRAFT_DECLARATION_MAX_BYTES ||
+      Buffer.byteLength(declarationJson, 'utf8') > DRAFT_DECLARATION_MAX_BYTES)
     return {...boundary, state: 'invalid_input' as const, reason: 'input_budget_or_body_invalid'};
   let raw: unknown;
-  try {raw = JSON.parse(input.declarationJson);} catch {
+  try {raw = JSON.parse(declarationJson);} catch {
     return {...boundary, state: 'invalid_input' as const, reason: 'invalid_json'};
   }
   if (raw && typeof raw === 'object' && Array.isArray((raw as {claims?: unknown}).claims) &&
@@ -50,8 +53,8 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
   input.assertCurrent?.();
   const finite = runClaimVerification({conclusionContract: contract, preparedEvidence, bindingEligibility: 'eligible'});
   const presentations = assessNumericPresentations({contract, claims: finite.claimVerificationResult.claimResults,
-    support: finite.claimSupport, body: input.body, candidate: {runId: input.runId,
-      attemptId: 'draft-diagnostic', candidateRef: 'draft-diagnostic', conclusionFingerprint: analysisDeliveryFingerprint(input.body)}});
+    support: finite.claimSupport, body, candidate: {runId: input.runId,
+      attemptId: 'draft-diagnostic', candidateRef: 'draft-diagnostic', conclusionFingerprint: analysisDeliveryFingerprint(body)}});
   const diagnostics = finite.claimVerificationResult.claimResults.map((claim, index) => {
     const declaration = contract.claims?.[index];
     const support = finite.claimSupport.find(item => item.claimId === claim.claimId);
@@ -69,8 +72,8 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
     const presentation = presentations.get(claim.claimId);
     const quoteOccurrences = (declaration?.semantics?.numeric?.presentation?.quotes ?? []).map((quote, quoteIndex) => {
       let exactSubstringOccurrences = 0;
-      for (let offset = input.body.indexOf(quote.text); offset >= 0 && exactSubstringOccurrences < 17;
-        offset = input.body.indexOf(quote.text, offset + quote.text.length)) exactSubstringOccurrences++;
+      for (let offset = body.indexOf(quote.text); offset >= 0 && exactSubstringOccurrences < 17;
+        offset = body.indexOf(quote.text, offset + quote.text.length)) exactSubstringOccurrences++;
       return {quoteIndex, exactSubstringOccurrences, ...(exactSubstringOccurrences === 17 ? {truncated: true} : {})};
     });
     const referenceReasons = [...new Set((claim.referenceResults ?? []).filter(reference => reference.status !== 'matched')

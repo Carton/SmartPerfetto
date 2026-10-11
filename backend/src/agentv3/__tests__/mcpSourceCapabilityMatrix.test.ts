@@ -24,9 +24,9 @@ const scope = {tenantId: 'tenant-matrix', workspaceId: 'workspace-matrix', userI
 const SOURCE_MARKER = 'MATRIX_SOURCE_BODY_MARKER';
 const SESSION_ID = 'mcp-source-capability-matrix';
 
-/** Tools every trace-attached run registers, whatever its source selection. */
+/** Tools every trace-attached run registers, including internal run protocol tools. */
 const PUBLIC_TRACE_TOOLS = [
-  'analyze_wait_chain', 'compare_baselines', 'detect_architecture', 'execute_sql', 'fetch_artifact',
+  'analyze_wait_chain', 'check_conclusion_draft', 'compare_baselines', 'detect_architecture', 'execute_sql', 'fetch_artifact',
   'flag_uncertainty', 'invoke_skill', 'list_skills', 'list_stdlib_modules', 'lookup_aosp_source',
   'lookup_baseline', 'lookup_knowledge', 'lookup_oem_sdk', 'lookup_sql_schema',
   'lookup_strategy_detail', 'query_perfetto_source', 'recall_patterns', 'recall_project_memory',
@@ -96,7 +96,7 @@ function createRunServer(input: {
 const sorted = (...groups: string[][]) => groups.flat().sort();
 
 describe('production MCP source capability matrix', () => {
-  it('registers only the public trace tools without an effective source selection', () => {
+  it('registers trace and run protocol tools without an effective source selection', () => {
     expect(createRunServer({}).names).toEqual(sorted(PUBLIC_TRACE_TOOLS));
     // Codebase ids under an explicit off authorize nothing and read no registration.
     let reads = 0;
@@ -155,7 +155,7 @@ describe('production MCP source capability matrix', () => {
       allowNewEvidence: false});
     // Acquisition tools are withheld at the registry boundary; metadata and retained reads remain.
     expect(existingOnly.names).toEqual([
-      'compare_baselines', 'fetch_artifact', 'flag_uncertainty', 'list_codebases', 'list_skills',
+      'check_conclusion_draft', 'compare_baselines', 'fetch_artifact', 'flag_uncertainty', 'list_codebases', 'list_skills',
       'list_stdlib_modules', 'lookup_baseline', 'lookup_knowledge', 'lookup_sql_schema', 'lookup_strategy_detail',
       'recall_patterns', 'recall_project_memory', 'resolve_hypothesis', 'revise_plan', 'submit_hypothesis',
       'submit_plan', 'update_plan_phase', 'write_analysis_note',

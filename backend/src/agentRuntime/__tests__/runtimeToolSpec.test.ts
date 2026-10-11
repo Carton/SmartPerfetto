@@ -21,6 +21,8 @@ import {
   type SharedToolSpec,
 } from '../runtimeToolSpec';
 import {createRuntimeToolConcurrencyCoordinator} from '../runtimeToolConcurrency';
+import {createOpenAIToolsFromMcpDefinitions} from '../engines/openai/openAiToolAdapter';
+import {createPiAgentCoreToolFromSharedSpec} from '../engines/pi/piAgentCoreRuntime';
 import {createRuntimePerformanceRecorder} from '../runtimePerformance';
 import {McpToolRegistry} from '../../agentv3/mcpToolRegistry';
 import {SMARTPERFETTO_ADMITTED_RUNTIME_CANDIDATES_ENV} from '../runtimeCandidateAdmission';
@@ -693,6 +695,35 @@ describe('SharedToolSpec', () => {
     expect(normalizeRuntimeToolArgs({process_name: 'null'})).toEqual({process_name: 'null'});
   });
 
+  it('preserves schema-declared strings while retaining container and placeholder compatibility', () => {
+    const args = {body: ' {"literal":true} ', declarationJson: '{"claims":[]}',
+      optional: '[1,2]', defaulted: '{"a":1}', enumeration: '{"enum":true}',
+      params: '{"nested":"[1,2]"}', list: '[{"id":1}]', omitted: 'null'};
+    const shape = {body: z.string(), declarationJson: z.string().max(65536), optional: z.string().optional(),
+      defaulted: z.string().default(''), enumeration: z.enum(['{"enum":true}']),
+      params: z.record(z.string(), z.any()), list: z.array(z.object({id: z.number()})), omitted: z.string().optional()};
+    const expected = {...args, params: {nested: [1, 2]}, list: [{id: 1}]};
+    delete (expected as Partial<typeof expected>).omitted;
+    expect(normalizeRuntimeToolArgs(args, shape)).toEqual(expected);
+    expect(normalizeRuntimeToolArgs(JSON.stringify(args), shape)).toEqual(expected);
+  });
+
+  it('transports exact JSON strings through the real shared Pi and OpenAI adapters', async () => {
+    const handler = jest.fn(async (args: Record<string, unknown>) => ({content: [{type: 'text' as const, text: JSON.stringify(args)}]}));
+    const shared: SharedToolSpec = {name: 'string_transport_probe', description: 'Preserve string input', exposure: 'internal',
+      inputSchema: {body: z.string(), declarationJson: z.string(), params: z.record(z.string(), z.any())}, handler};
+    const args = {body: '{"report":"literal"}', declarationJson: '{"claims":[]}', params: '{"enabled":true}'};
+    const expected = {...args, params: {enabled: true}};
+    const pi = createPiAgentCoreToolFromSharedSpec(shared, {allowedToolNames: new Set([shared.name])});
+    await pi.execute('string-transport-pi', args);
+    const registry = new McpToolRegistry();
+    registry.registerShared(shared);
+    const openai = createOpenAIToolsFromMcpDefinitions(registry.list())[0] as any;
+    await openai.invoke({context: {}}, JSON.stringify(args), {toolCall: {callId: 'string-transport-openai'}});
+    expect(handler).toHaveBeenCalledTimes(2);
+    for (const call of handler.mock.calls) expect(call[0]).toEqual(expected);
+  });
+
   it('supports a fake third-party adapter without a production runtime value', async () => {
     const handler = jest.fn(async (args: Record<string, unknown>, _extra: unknown) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(args) }],
@@ -708,7 +739,7 @@ describe('SharedToolSpec', () => {
       name: `third-party-test:${shared.name}`,
       schema: createJsonSchemaFromZodRawShape(shared.inputSchema),
       call: async (rawArgs: unknown) => shared.handler(
-        normalizeRuntimeToolArgs(rawArgs) as Record<string, unknown>,
+        normalizeRuntimeToolArgs(rawArgs, shared.inputSchema) as Record<string, unknown>,
         { runtime: 'third-party-test-engine' },
       ),
     };
@@ -721,10 +752,10 @@ describe('SharedToolSpec', () => {
       properties: { payload: { type: 'string' } },
     });
     expect(handler).toHaveBeenCalledWith(
-      { payload: { nested: true } },
+      { payload: '{"nested": true}' },
       { runtime: 'third-party-test-engine' },
     );
-    expect((result.content[0] as any).text).toBe('{"payload":{"nested":true}}');
+    expect((result.content[0] as any).text).toBe(JSON.stringify({payload: '{"nested": true}'}));
   });
 
   it('keeps one timing receipt when a registry observer wraps an already timed SDK handler', async () => {
