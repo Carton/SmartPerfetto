@@ -13,6 +13,25 @@ import {projectOwnerAnalysisResult} from '../../security/privateAnalysisProjecti
 const CANARY = 'PRIVATE_CREDENTIAL_CANARY';
 
 describe('analysis evidence presentation', () => {
+  test('round-trips explicit display bindings and independent checks without accepting extra receipt fields', () => {
+    const input = fixture();
+    const presentation = {schemaVersion: 'numeric_presentation@1' as const, unit: 'ms', decimalPlaces: 1,
+      rounding: 'half_away_from_zero' as const, quotes: [{text: '32.6 ms', occurrence: 0}]};
+    input.result.conclusionContract!.claims![0].semantics!.numeric = {operator: 'eq', value: 32.576, unit: 'ms', presentation};
+    const assessment = {schemaVersion: 'numeric_presentation_assessment@1' as const, status: 'matched' as const,
+      reason: 'display_matches', binding: {candidate: {runId: 'run', attemptId: 'attempt', candidateRef: 'candidate',
+        conclusionFingerprint: 'a'.repeat(64)}, claimFingerprint: 'b'.repeat(64)},
+      source: {anchorId: 'anchor-1', captureId: 'capture-1', rowIndex: 0, column: 'duration'}, locations: [{start: 0, end: 7}]};
+    input.result.claimVerificationResult!.claimResults[0].numericPresentation = assessment;
+    const projected = projectAnalysisEvidenceForDisplay(input)!;
+    const restored = parseClosedAnalysisEvidencePresentation(jsonClone(projected))!;
+    expect(restored.claims[0].semantics?.numeric?.presentation).toEqual(presentation);
+    expect(restored.claimVerificationResult?.claimResults[0].numericPresentation).toEqual(assessment);
+    const invalid = jsonClone(projected);
+    addUnknown(invalid.claimVerificationResult!.claimResults[0].numericPresentation!, 'verified', true);
+    expect(parseClosedAnalysisEvidencePresentation(invalid)).toBeUndefined();
+  });
+
   test('projects every formal evidence family without changing status or null/zero/false values', () => {
     const {result, sourceProvenance} = fixture();
     addUnknown(result.conclusionContract!.claims![0], 'rawSemantics', {apiKey: CANARY});

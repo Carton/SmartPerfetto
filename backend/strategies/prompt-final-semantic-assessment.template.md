@@ -68,7 +68,17 @@ Verification and this review treat `count` and a producer's `frames`/`events`
 as the same dimension at 1:1 (no conversion); `frames` and `events` never
 interchange. Never infer a mapping from a column name, display format, casing or familiar suffix.
 
-An exact equivalent needs no approximation marker. Discarding decimal digits
+The server's optional `numericPresentation` rows check explicit
+`numeric.presentation` bindings against captured values before this review.
+`matched` establishes only the arithmetic and format at those body locations.
+Bound fixed-decimal displays need no approximation marker. Still review subject,
+scope, totals versus components, qualifiers (including an assertion of exactness),
+negation, comparisons and causality. Never turn a matched display into proof of
+those meanings or of body coverage. A mismatched/not-checked row cannot be
+overridden by your agreement. Preserve all semantic issues; locate a purely
+numeric dispute on the numeric literal itself, not an entire sentence.
+
+For displays without such a binding, an exact equivalent needs no approximation marker. Discarding decimal digits
 requires `约`, `≈`, `~`, `about`, `approximately`, or stated rounding to N decimals.
 Convert exactly first, then standard decimal rounding at the displayed decimal
 places must equal the displayed value. Thus `301839437 ns` may be written

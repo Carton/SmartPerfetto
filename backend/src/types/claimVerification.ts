@@ -2,6 +2,8 @@
 // Copyright (C) 2024-2026 Gracker (Chris)
 // This file is part of SmartPerfetto. See LICENSE for details.
 
+import type {AnalysisCandidateIdentity} from './analysisDelivery';
+
 /** Version 1 remains readable in persisted results; new verification emits version 2. */
 export type ClaimVerificationSchemaVersion = 'claim_verifier@1' | 'claim_verifier@2';
 
@@ -87,10 +89,21 @@ export interface ClaimSemanticReviewTrace {
   contentLocations: Array<{start: number; end: number; textHash: string}>;
 }
 
+/** Backend-calculated formatting only; neither semantic coverage nor evidence of causality. */
+export interface NumericPresentationAssessment {
+  schemaVersion: 'numeric_presentation_assessment@1';
+  status: 'matched' | 'mismatch' | 'not_checked';
+  reason: string;
+  binding: {candidate: AnalysisCandidateIdentity; claimFingerprint: string};
+  source?: {anchorId: string; captureId: string; rowIndex: number; column: string};
+  locations: Array<{start: number; end: number}>;
+}
+
 export interface ClaimVerificationClaimResult {
   claimId: string;
   status: ClaimVerificationClaimStatus;
   semanticReview?: ClaimSemanticReviewTrace;
+  numericPresentation?: NumericPresentationAssessment;
   /** Compatibility alias. A matched cell alone never verifies a proposition in v2. */
   referenceResults?: ClaimReferenceVerificationResult[];
   referenceCells?: ClaimReferenceVerificationResult[];

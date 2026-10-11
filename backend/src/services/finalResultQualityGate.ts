@@ -151,6 +151,9 @@ function describeContradictedClaims(
   const semanticInconsistentIds = new Set(verification.issues
     .filter(issue => issue.severity === 'error' && isSemanticClaimIssueCode(issue.code) && claimIds.has(issue.claimId))
     .map(issue => issue.claimId));
+  const displayMismatchIds = new Set(verification.issues
+    .filter(issue => issue.severity === 'error' && issue.code === 'numeric_presentation_mismatch' && claimIds.has(issue.claimId))
+    .map(issue => issue.claimId));
   // A warning since undeclared assertions stopped failing the gate on their
   // own; still named when another check fails.
   const undeclaredAssertions = verification.issues.some(issue => issue.code === SEMANTIC_UNDECLARED_CLAIM_ISSUE_CODE);
@@ -159,6 +162,7 @@ function describeContradictedClaims(
     ...(globalBindingFailure ? ['声明或绑定校验存在未关联到具体断言的错误'] : []),
     ...(mismatchedIds.size ? [`${mismatchedIds.size} 条断言的引用值与证据不符`] : []),
     ...(rejectedPropositionIds.size ? [`${rejectedPropositionIds.size} 条断言的命题未通过确定性证明`] : []),
+    ...(displayMismatchIds.size ? [`${displayMismatchIds.size} 条断言的正文数值与原始证据的换算或舍入结果不符`] : []),
     ...(missingIds.size ? [`${missingIds.size} 条断言的引用未找到所需证据`] : []),
     ...(semanticInconsistentIds.size ? [`${semanticInconsistentIds.size} 条断言的正文表述与其声明不一致`] : []),
     ...(undeclaredAssertions ? ['正文包含未声明的断言'] : []),

@@ -83,6 +83,8 @@ function literal(path: string[], value: string): boolean {
     'claims.*.semantics.modality': CONCLUSION_PROTOCOL_VALUES.modality,
     'claims.*.semantics.scope.population': CONCLUSION_PROTOCOL_VALUES.population,
     'claims.*.semantics.numeric.operator': CONCLUSION_PROTOCOL_VALUES.operator,
+    'claims.*.semantics.numeric.presentation.schemaVersion': ['numeric_presentation@1'],
+    'claims.*.semantics.numeric.presentation.rounding': ['half_away_from_zero'],
     'relationProposals.*.schemaVersion': [CONCLUSION_PROTOCOL_VALUES.relationSchemaVersion],
     'relationProposals.*.kind': CONCLUSION_PROTOCOL_VALUES.relationKind,
     'relationProposals.*.direction': CONCLUSION_PROTOCOL_VALUES.direction,

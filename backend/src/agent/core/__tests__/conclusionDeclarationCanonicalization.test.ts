@@ -378,6 +378,34 @@ describe('numeric claim diagnostics name the failing part', () => {
   const claim = REAL.numeric_toolcall;
   const numeric = claim.semantics.numeric;
   const withNumeric = (value: unknown) => ({...claim, semantics: {...claim.semantics, numeric: value}});
+  const presentation = {schemaVersion: 'numeric_presentation@1', unit: 'ms', decimalPlaces: 1,
+    rounding: 'half_away_from_zero', quotes: [{text: '32.6 ms', occurrence: 0}]};
+
+  it('preserves explicit numeric presentation proposals across declaration round trips', () => {
+    const declared = withNumeric({...numeric, presentation});
+    const parsed = parseDeclaredConclusionClaims([declared]);
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.claims[0].semantics?.numeric).toEqual({...numeric, presentation});
+    const sidecar = renderConclusionContractSidecar(verboseDeclaration([declared]) as any);
+    expect(parseConclusionContractSidecar(sidecar).contract?.claims?.[0].semantics?.numeric?.presentation).toEqual(presentation);
+    expect(analysisDeliveryFingerprint(parsed.claims)).not.toBe(analysisDeliveryFingerprint(parseDeclaredConclusionClaims([claim]).claims));
+  });
+
+  it.each([
+    {...presentation, schemaVersion: 'numeric_presentation@2'}, {...presentation, verified: true},
+    {...presentation, rounding: 'tolerance'}, {...presentation, decimalPlaces: -1},
+    {...presentation, decimalPlaces: 1.5}, {...presentation, decimalPlaces: 19},
+    {...presentation, quotes: []}, {...presentation, quotes: [{text: '32.6 ms', occurrence: -1}]},
+    {...presentation, quotes: [{text: '32.6 ms', expected: 32.6}]},
+    {...presentation, quotes: [{text: 'x'.repeat(257)}]},
+  ])('keeps an invalid or unsupported display declaration invalid rather than discarding it (%#)', invalid => {
+    const raw = withNumeric({...numeric, presentation: invalid});
+    const parsed = parseDeclaredConclusionClaims([raw]);
+    expect(parsed.claims[0].valid).toBe(false);
+    expect(parsed.claims[0].semantics).toBeUndefined();
+    expect(parsed.claims[0].rawSemantics).toEqual(raw.semantics);
+    expect(parsed.issues).toEqual(expect.arrayContaining([expect.objectContaining({code: 'invalid_semantics'})]));
+  });
   const intent: AnalysisTurnIntent = {schemaVersion: 1, status: 'resolved', source: 'semantic', registryFingerprint: 'registry',
     taskKind: 'investigation', sceneId: 'general', scope: 'bounded_question', recommendedComplexity: 'full',
     deliverable: 'answer', evidenceAccess: 'read_new'};

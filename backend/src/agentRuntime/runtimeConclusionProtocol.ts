@@ -10,7 +10,7 @@ import {
   sanitizeCandidateProtocolDiagnostic,
   type CandidateProtocolDiagnostic,
 } from '../services/canonicalAnalysisResult';
-import {MAX_CLAIM_DIAGNOSTICS, isConclusionRootParseIssue, parseConclusionContractDeclaration,
+import {CONCLUSION_CONTRACT_SIDECAR_MARKER, MAX_CLAIM_DIAGNOSTICS, isConclusionRootParseIssue, parseConclusionContractDeclaration,
   parseDeclaredConclusionClaims, parseDeclaredRelationProposals, relationProposalFailure,
   type ConclusionContractClaimItem} from '../agent/core/conclusionContract';
 import {analysisDeliveryFingerprint} from '../types/analysisDelivery';
@@ -378,6 +378,31 @@ function nativeDeclarationCandidateFitsOutput(candidate: string, outputByteLimit
     Buffer.byteLength(candidate, 'utf8') <= outputByteLimit;
 }
 
+/** A repair hint only. Parser messages can contain private model text; keep only
+ * a numeric V8 position in the original JSON payload, never the message itself.
+ * Unknown engine formats omit the position. No malformed bytes are admitted.
+ */
+function declarationJsonDiagnostic(request: NativeDeclarationCompletionRequest):
+  {payloadChars: number; offsetUtf16?: number} | undefined {
+  if (!request.diagnostic.issueCodes.includes('invalid_json') || !request.rejectedDeclaration) return undefined;
+  const lines = request.rejectedDeclaration.trimEnd().split(/\r?\n/);
+  if (lines[0] !== CONCLUSION_CONTRACT_SIDECAR_MARKER || lines[1] !== '```json' ||
+      lines[lines.length - 2] !== '```' || lines[lines.length - 1] !== '-->') return undefined;
+  const payload = lines.slice(2, -2).join('\n');
+  try { JSON.parse(payload); return undefined; }
+  catch (error) {
+    const position = error instanceof SyntaxError
+      ? /\bat position (\d+)(?: \(line \d+ column \d+\))?$/.exec(error.message)?.[1] : undefined;
+    const offset = position === undefined ? undefined : Number(position);
+    const diagnostic = {payloadChars: payload.length,
+      ...(offset !== undefined && Number.isSafeInteger(offset) && offset >= 0 && offset <= payload.length
+        ? {offsetUtf16: offset} : {})};
+    console.log(`[DeclarationRepair] JSON syntax: payloadChars=${diagnostic.payloadChars} ` +
+      `offsetUtf16=${diagnostic.offsetUtf16 ?? 'unknown'}`);
+    return diagnostic;
+  }
+}
+
 /** Build the one no-tool completion request with the full native body as data. */
 export function buildNativeDeclarationCompletionPrompt(input: {
   request: NativeDeclarationCompletionRequest;
@@ -398,6 +423,7 @@ export function buildNativeDeclarationCompletionPrompt(input: {
       rejected_declaration_json: JSON.stringify(input.request.rejectedDeclaration === undefined ? null
         : {schemaVersion: 1, kind: 'rejected_declaration', text: input.request.rejectedDeclaration}),
       max_claim_diagnostics: String(MAX_CLAIM_DIAGNOSTICS),
+      serialization_diagnostic: JSON.stringify(declarationJsonDiagnostic(input.request) ?? null),
       candidate_protocol_diagnostic: JSON.stringify(
         sanitizeCandidateProtocolDiagnostic(input.request.diagnostic) ?? null,
       ),
@@ -427,7 +453,7 @@ export function buildNativeDeclarationCompletionPrompt(input: {
  */
 export function acceptNativeDeclarationCompletion(input: {
   request: NativeDeclarationCompletionRequest;
-  completion: Pick<AnalysisCompletion, 'status'>;
+  completion: Pick<AnalysisCompletion, 'status' | 'reason'>;
   candidate: string;
   outputByteLimit?: number;
 }): string | undefined {
@@ -440,7 +466,10 @@ export function acceptNativeDeclarationCompletion(input: {
       Object.entries(facts).map(([key, value]) => ` ${key}=${value}`).join(''));
     return undefined;
   };
-  if (input.completion.status !== 'completed') return reject('completion_not_completed', {completion: input.completion.status});
+  if (input.completion.status !== 'completed') return reject('completion_not_completed', {
+    completion: input.completion.status,
+    ...(input.completion.reason ? {nativeReason: input.completion.reason} : {}),
+  });
   if (!nativeDeclarationCandidateFitsOutput(input.candidate, input.outputByteLimit)) return reject('output_limit');
   const original = inspectCandidateProtocol(input.request.originalBody);
   if (original.status !== 'absent') return reject('original_not_absent', {original: original.status});

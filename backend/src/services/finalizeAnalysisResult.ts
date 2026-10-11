@@ -31,6 +31,7 @@ import {assessFinalSemantics, buildFinalSemanticPrompt, FINAL_SEMANTIC_INPUT_BYT
   type SemanticClaimAssessment} from './finalSemanticAssessment';
 import {SEMANTIC_NUMERIC_DISPLAY_ROUNDING_ISSUE_CODE, SEMANTIC_UNDECLARED_CLAIM_ISSUE_CODE, semanticClaimIssueCode} from './finalSemanticIssueCodes';
 import {countLocatedNumbersShowingRounding, locatedNumbersShowDeclaredRounding} from './finalSemanticNumericDisplay';
+import {assessNumericPresentations} from './numericPresentationAssessment';
 import {appendTerminationMessage, applyFinalResultQualityGate, type FinalResultComparisonIdentity,
   type FinalResultQualityIssue} from './finalResultQualityGate';
 import {withOwnerCodeAwareProjection} from './security/codeAwareOutputRegistry';
@@ -287,26 +288,45 @@ function joinClaimVerification(input: {
     if (prior.status === 'unsupported' || prior.deterministicProof?.status === 'rejected') {
       return {...prior, status: 'unsupported'};
     }
+    const presentation = prior.numericPresentation;
+    if (presentation?.status === 'mismatch') {
+      issues.push({claimId: id, severity: 'error', code: 'numeric_presentation_mismatch',
+        message: `Claim ${id}: ${presentation.reason}`});
+      return {...prior, status: 'unsupported'};
+    }
+    if (presentation?.status === 'not_checked') issues.push({claimId: id, severity: 'warning',
+      code: 'numeric_presentation_not_checked', message: `Claim ${id}: ${presentation.reason}`});
     if (bound && review?.consistency === 'inconsistent') {
       // Only the issue's own located text: a contradiction whose location could
       // not be resolved stays a contradiction. A downgrade to display rounding
       // additionally needs the captured-cell identity of plan 2 D: the same
       // shown value in another cell's place is a real mismatch.
       const displayRounding = (issue: typeof review.issues[number]): boolean => {
-        if (issue.code !== 'numeric_mismatch') return false;
+        if (presentation || issue.code !== 'numeric_mismatch') return false;
         const cell = sameCapturedCell(claim, supportById.get(id), review, issue, body, prior);
         return cell ? locatedNumbersShowDeclaredRounding(body, issue.contentLocations,
           {operator: 'eq', value: cell.value, unit: cell.unit}, cell.requirePrecisionLoss) : false;
       };
-      const contradictions = review.issues.filter(issue => !displayRounding(issue));
+      // Only a dispute located entirely on a checked literal can be called an
+      // arithmetic disagreement. A whole-sentence/scope dispute keeps standing.
+      const displayDisagreement = (issue: typeof review.issues[number]): boolean =>
+        presentation?.status === 'matched' && issue.code === 'numeric_mismatch' &&
+        issue.contentLocations.length > 0 && issue.contentLocations.every(location =>
+          presentation.locations.some(checked => location.start >= checked.start && location.end <= checked.end) &&
+          review.contentLocations.some(claimLocation => location.start >= claimLocation.start && location.end <= claimLocation.end));
+      const contradictions = review.issues.filter(issue => !displayRounding(issue) && !displayDisagreement(issue));
       for (const issue of review.issues) issues.push(contradictions.includes(issue)
         ? {claimId: id, severity: 'error', code: semanticClaimIssueCode(issue.code), message: `Claim ${id}: ${issue.code}`}
-        : {claimId: id, severity: 'warning', code: SEMANTIC_NUMERIC_DISPLAY_ROUNDING_ISSUE_CODE,
+        : {claimId: id, severity: 'warning', code: displayDisagreement(issue)
+          ? 'numeric_presentation_review_disagreement' : SEMANTIC_NUMERIC_DISPLAY_ROUNDING_ISSUE_CODE,
           message: `Claim ${id}: the body shows the declared value at its displayed precision`});
       // An unmarked rounding is not verified, but it contradicts nothing.
       return {...prior, status: contradictions.length ? 'unsupported' : 'partial'};
     }
     if (!complete || review?.consistency !== 'consistent') return {...prior, status: 'partial'};
+    if (presentation && (presentation.status !== 'matched' ||
+        !presentation.locations.every(location => review.contentLocations.some(span =>
+          location.start >= span.start && location.end <= span.end)))) return {...prior, status: 'partial'};
     const semantics = claim.semantics;
     if (semantics && (semantics.discourse !== 'asserted' || semantics.modality !== 'certain' ||
       claim.kind === 'inference' || claim.kind === 'recommendation')) {
@@ -389,7 +409,8 @@ function semanticReviewTriggers(input: {
       ruleVersion: FINAL_SEMANTIC_RULE_VERSION, binding: {snapshotFingerprint: 'hypothetical_review', canonicalCandidate: candidate},
       status: 'checked', consistency: 'consistent',
       coverage: {body: 'complete', claims: 'complete', report: 'not_applicable'},
-      claims: declarations.map(claim => ({claimId: claim.id ?? '', consistency: 'consistent', contentLocations: [], issues: []})),
+      claims: declarations.map(claim => ({claimId: claim.id ?? '', consistency: 'consistent',
+        contentLocations: [{start: 0, end: body.length}], issues: []})),
       omissions: [], requirements: []};
     if (joinClaimVerification({contract, draft: input.finiteProofs, semantic: perfectReview, candidate, body,
       bindingEligibility: input.bindingEligibility}).passed) triggers.push('claims_verifiable');
@@ -602,6 +623,12 @@ export async function finalizeAnalysisResult(input: FinalizeAnalysisResultInput)
       comparisonReportSection, relationCandidates: relations.relationCandidates,
       relationActivationClaimIds: relations.relationActivationClaimIds, preparedEvidence: prepared,
       bindingEligibility: canonical.bindingEligibility, policy: 'record_only'});
+    const numericPresentations = assessNumericPresentations({contract: validationContract,
+      claims: draft.claimVerificationResult.claimResults, support: draft.claimSupport, body: result.conclusion, candidate});
+    draft.claimVerificationResult.claimResults = draft.claimVerificationResult.claimResults.map(claim => {
+      const numericPresentation = numericPresentations.get(claim.claimId);
+      return numericPresentation ? {...claim, numericPresentation} : claim;
+    });
     const requirements = context ? pinnedRequirements(context) : undefined;
     const investigationRequirements = context ? resolveAnalysisInvestigationRequirements({
       intent: context.turnIntent, strategyRegistry: context.strategyRegistry}) : undefined;
@@ -630,6 +657,8 @@ export async function finalizeAnalysisResult(input: FinalizeAnalysisResultInput)
       const snapshot: FinalSemanticSnapshot = {inputCoverage: 'complete', declarationBindingEligibility: canonical.bindingEligibility,
         query: providerQuery?.text ?? query,
         body: result.conclusion, conclusionContract: contractForSemanticReview(validationContract), evidenceSnapshot, sourceUse,
+        ...(numericPresentations.size ? {numericPresentation: [...numericPresentations].map(([claimId, assessment]) =>
+          ({claimId, ...assessment}))} : {}),
         capabilitySnapshot: context.capabilityEvidence, reportRequirements: requirements,
         investigationRequirements,
         ...(selectionScope ? {selectionScope} : {}),
@@ -652,7 +681,7 @@ export async function finalizeAnalysisResult(input: FinalizeAnalysisResultInput)
         projected.changed ? {...value, inputCoverage: 'incomplete',
           inputProjectionIssue: projected.limited ? 'structure_limit' : 'content_projection', query: '', body: result.conclusion,
           conclusionContract: undefined, protocolDiagnostics: undefined, evidenceSnapshot: null,
-          sourceUse: undefined, capabilitySnapshot: undefined, investigationEvidence: undefined}
+          sourceUse: undefined, capabilitySnapshot: undefined, investigationEvidence: undefined, numericPresentation: undefined}
           : compactSemanticSourceSnapshot({...projected.value,
             evidenceSnapshot: compactSemanticEvidenceSnapshot(projected.value.evidenceSnapshot)});
       let safeSnapshot: FinalSemanticSnapshot;

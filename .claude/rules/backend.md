@@ -333,7 +333,24 @@ Keep these boundaries intact:
   read as idle on their own: idle needs the root wait between slices *and* low
   attributable time, while an in-slice chain ending in a peer's event wait is a
   `peer_event_wait` warning (a lock holder waiting on the network).
-- A semantic `numeric_mismatch` is recorded as the warning
+- Explicit `semantics.numeric.presentation` (`numeric_presentation@1`) is an
+  untrusted display proposal inside the closed numeric schema; unsupported
+  versions/fields invalidate the claim instead of being ignored. Only a fully
+  proved `numeric.cell` equality and a unique immutable captured cell can drive
+  its independent, pre-review `numericPresentation` check. Exact rational unit
+  conversion and one declared fixed-decimal rounding mode determine the result;
+  identities are excluded, counts stay integral, and nonzero shown as zero stays
+  unchecked. Bind the result to the candidate, declaration and capture, preserve
+  all original text/values, and never consume a serialized receipt as authority.
+  A numeric mismatch remains unsupported even without review or with model
+  agreement. An unchecked binding cannot verify. `final_semantics@3` still owns
+  meaning and coverage; a matched literal does not prove scope or causality.
+  Only a numeric dispute located wholly within a matched literal becomes a
+  review-disagreement warning, still partial. All bound locations must be inside
+  the review's claim coverage before joint verification. Owner output/report/CLI
+  and snapshots retain the separate result; strict privacy output omits its
+  locations and receipt. Old declarations keep the legacy path below.
+- Without an explicit binding, a semantic `numeric_mismatch` is recorded as the warning
   `semantic_numeric_display_rounding` only under captured-cell identity: the
   claim is a `captured.cell` proposition, or a `numeric.cell` `eq` proposition
   with a proved finite rule and complete proposition coverage. It has exactly

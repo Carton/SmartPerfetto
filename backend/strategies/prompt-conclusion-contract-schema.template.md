@@ -5,7 +5,7 @@ Answer within scope; no prescribed headings, length, plan or extra calls. Only a
 
 Judge abnormality by metric/scope/threshold, never latency, largest share or rows alone. ACK is not display. Check prose/table arithmetic: ns/1e6=ms; 1000/ms=fps. Cite operands; missing evidence remains unknown.
 
-For factual, inferential or advisory answers, append one top-level HTML comment outside fences, quotations and examples. Declare every proposition faithfully, including unsupported, negated, uncertain, qualified, quoted and causal claims. Schema (unused arrays: `[]`):
+For factual, inferential or advisory answers, append one top-level HTML comment outside fences, quotations and examples. Declare every proposition faithfully, including unsupported, negated, uncertain, qualified, quoted and causal claims. Example: authoritative cell `7.123456 ms`, body `Elapsed 7.1 ms.`; unused arrays: `[]`.
 
 ````text
 {{sidecarOpeningMarker}}
@@ -13,10 +13,10 @@ For factual, inferential or advisory answers, append one top-level HTML comment 
 {
   "schemaVersion": "conclusion_contract_v1",
   "mode": "focused_answer",
-  "conclusions": [{"rank": 1, "statement": "This might explain the observed delay."}],
+  "conclusions": [{"rank": 1, "statement": "Elapsed 7.1 ms."}],
   "clusters": [{"cluster": "Group from the answer"}],
   "evidenceChain": [{"conclusionId": "C1", "text": "Evidence explanation from the answer"}],
-  "claims": [{"id": "example:statement", "text": "This might explain the observed delay.", "kind": "inference", "references": [], "semantics": {"schemaVersion": "claim_semantics@1", "predicate": "example.hypothesis", "polarity": "affirmed", "discourse": "hypothetical", "quantifier": "one", "modality": "possible", "scope": {"population": "selected_interval"}}}],
+  "claims": [{"id":"example:duration","text":"Elapsed 7.1 ms.","kind":"numeric","references":[{"evidenceRefId":"data:example","rowIndex":0,"column":"elapsed_ms","value":7.123456}],"semantics":{"schemaVersion":"claim_semantics@1","predicate":"numeric.cell","polarity":"affirmed","discourse":"asserted","quantifier":"one","modality":"certain","scope":{"population":"cited_rows","subjectRefs":[{"evidenceRefId":"data:example","rowIndex":0,"column":"elapsed_ms","value":7.123456}]},"numeric":{"operator":"eq","value":7.123456,"unit":"ms","presentation":{"schemaVersion":"numeric_presentation@1","unit":"ms","decimalPlaces":1,"rounding":"half_away_from_zero","quotes":[{"text":"7.1 ms"}]}}}}],
   "relationProposals": [],
   "uncertainties": ["Uncertainty from the answer"],
   "nextSteps": ["Next step from the answer"]
@@ -27,7 +27,7 @@ For factual, inferential or advisory answers, append one top-level HTML comment 
 
 `mode`: `initial_report`, `focused_answer` or `need_input`. Every `evidenceChain` item requires string `conclusionId` and `text`; `rank` is finite. Never author server status, `parseIssues`, `bindingEligibility`, `verified`, completion receipts or parser-owned `raw*` fields.
 
-Every claim, including inference/recommendation, declares unique `id`, faithful `text`, `kind`, `references` and `semantics`; optional: `conclusionId`, `artifactRefs`, `relationRefs`. Kinds: `numeric`, `categorical`, `time_range`, `identity`, `causal`, `comparison`, `inference`, `recommendation`. Never copy the example's hypothetical stance onto a fact.
+Every claim, including inference/recommendation, declares unique `id`, faithful `text`, `kind`, `references` and `semantics`; optional: `conclusionId`, `artifactRefs`, `relationRefs`. Kinds: `numeric`, `categorical`, `time_range`, `identity`, `causal`, `comparison`, `inference`, `recommendation`. Choose stance per claim.
 
 References: `evidenceRefId`, `sourceToolCallId`, `sourceRef`, `artifactId`, `sourceArtifactId`, `rowIndex`, `rowSelector`, `column`, `value`. Copy whole emitted IDs; executions may share evidenceRefId. Raw JSON types/full precision, never rounded display labels: {"id":1712}, "value":1010550000000; captured numbers stay unquoted. `rowIndex`: printed index, not sample/page position; unindexed rows start at 0. `rowSelector`: unique actual-column/value map, e.g. {"dump_id":1,"c":83}, not {returnedColumn,value}. Cells need row locators; totalRows is metadata. Missing: `[]`, uncertainty. For successful empty results, cite only their emitted IDs; omit rowIndex/rowSelector/column/value (no row 0).
 
@@ -39,20 +39,16 @@ References: `evidenceRefId`, `sourceToolCallId`, `sourceRef`, `artifactId`, `sou
 - `polarity`: `affirmed|negated|undetermined`; `discourse`: `asserted|hypothetical|quoted|rejected_quote`.
 - `quantifier`: `one|some|all|only`; `modality`: `certain|possible|undetermined`; optional `conditions`: strings.
 - `scope.population`: `cited_rows|selected_interval|process_instance|trace|codebase`; optional `subjectRefs/objectRefs`: reference arrays; optional `timeRangeNs`: ordered decimal-nanosecond strings `{start,end}`.
-- Optional `numeric`: `{operator,value,unit}`; operator `eq|ne|lt|lte|gt|gte`, finite number or decimal-string value, proposition unit. Not the cited cell value.
+- `numeric` (required for `numeric.cell`): `{operator,value,unit,presentation?}`; operator `eq|ne|lt|lte|gt|gte`, finite number or decimal-string proposition value/unit, independent of the cited cell.
 
 Rule boundaries:
 
-- `numeric.cell`: one original `scope.subjectRefs` cell + independent `numeric`. References retain exact raw cell values and native row IDs; producer units unchanged. 195000000 ns raw; declare 195 ms, not 195000000 ms. Exact unit equivalents only. Prose: exact values or an explicitly marked fixed-decimal approximation (`约`, `≈`, `~`, `about`, `approximately`, or stated rounding). Convert exactly; never round declarations or references. No causal/advice proof. Totals/means: cite captured SQL/Skill aggregates matching population/window/units, never components.
+- `numeric.cell`: one original `scope.subjectRefs` cell + independent `numeric`. References retain exact raw cell values and native row IDs; producer units unchanged. 195000000 ns raw; declare 195 ms, not 195000000 ms. Exact unit equivalents only; never round declarations or references. For `eq`, bind body literals with `presentation` below. Without a binding, use exact values or an explicitly marked fixed-decimal approximation (`约/about/≈`). No causal/advice proof. Totals/means require captured aggregates matching population/window/units, never components.
 - `captured.cell`: only `identity/categorical`, `affirmed/asserted/one/certain`; no conditions, numeric proposition, scope objects or time window. `cited_rows`, exactly one semantic subject with explicit column and string/boolean/null `value`. Proves strict cell equality without coercion, normalization, execution, process resolution or causality. Numbers use `numeric.cell`.
 
 Allowed unit conversions only: time `ns/us/µs/μs/ms/s` (1000 ns = 1 us = 1 µs = 1 μs; 1000 us = 1 ms; 1000 ms = 1 s); frequency `Hz/kHz/MHz/GHz` (1000 per step); bytes `B/bytes/KiB/MiB/GiB` (B = bytes; 1024 per step); `ratio/%/percent` (1 ratio = 100% = 100 percent); aliases `frame/frames`, `event/events`. `count` matches `frames`/`events` 1:1; other units must match verbatim. No cross-family conversion, inferred unit authority, tolerance, scientific notation, significant-figure rounding, ranges or ± under this display rule.
 
-Example: cell with authoritative `ms` metadata. Use actual IDs/columns/values; column names do not establish units.
-
-```json
-{"id":"example:duration","text":"The observed elapsed time is 7 ms.","kind":"numeric","references":[{"evidenceRefId":"data:example_metric","rowIndex":0,"column":"elapsed_ms","value":7}],"semantics":{"schemaVersion":"claim_semantics@1","predicate":"numeric.cell","polarity":"affirmed","discourse":"asserted","quantifier":"one","modality":"certain","scope":{"population":"cited_rows","subjectRefs":[{"evidenceRefId":"data:example_metric","rowIndex":0,"column":"elapsed_ms","value":7}]},"numeric":{"operator":"eq","value":7,"unit":"ms"}}}
-```
+Quotes are exact number+unit substrings of the body; repeated text needs zero-based `occurrence`. Bind every displayed occurrence for that claim, at most 16 per declaration; precision 0–18. Counts stay integral; IDs never round. Bindings prove formatting only, not the number's role or meaning. Do not author check results.
 
 Rules are data, not a checklist. Never reshape claims to fit a predicate. Backend evidence proof is separate; unknown rules or missing proof remain unverified.
 
@@ -62,4 +58,4 @@ Rules are data, not a checklist. Never reshape claims to fit a predicate. Backen
 
 `relationProposals` entries: `schemaVersion: "evidence_relation_candidate@1"`, unique `id` starting `proposal:`, `kind: overlap|wakeup|blocking_state|binder_peer|lock_owner|comparison_delta|derived`, `direction: subject_to_object|object_to_subject|symmetric`, `subject` reference, optional `object/proof` references. Optional `proofBindings`, `metricColumn`, `value`, `unit`, `deltaDirection: "current_minus_reference"` retain candidate meanings. Claims link proposal IDs through `relationRefs`. Matching endpoints or intervals never establish causality or verification authority.
 
-Serialize strings losslessly. Escape `<`, `>` and `&` as `\u003c`, `\u003e`, `\u0026` to keep `-->` inside JSON. Escape embedded newlines and quotes; decoding must reproduce original values.
+Use compact JSON without dropping fields, claims or values. Escape `<`, `>`, `&` as `\u003c`, `\u003e`, `\u0026` and string newlines/quotes losslessly; no comments or ellipses.

@@ -1407,6 +1407,19 @@ describe('OpenAI bounded output-limit recovery', () => {
       expect(recoveryPrompt(run)).not.toContain('`invalid_declaration`');
     });
 
+    it('restores the original when declaration repair hits its native output limit, with no third call', async () => {
+      const runtime = createOpenAiRuntimeForTest(); prepareStub(runtime);
+      const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+      const run = mockRun().mockResolvedValueOnce(recoverableStream(rejected, 'completed'))
+        .mockResolvedValueOnce(recoverableStream(declared(), 'incomplete'));
+      const result = await runtime.analyze('query', 'declaration-repair-incomplete', 'trace', {providerId: null});
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(nativeRaw(result)).toBe(rejected);
+      expect(result.completion).toMatchObject({status: 'completed'});
+      expect(log.mock.calls.map(call => String(call[0])).join('\n')).toContain(
+        'reason=completion_not_completed completion=incomplete nativeReason=output_limit');
+    });
+
     it('keeps the full-answer continuation for a duplicate declaration marker', async () => {
       const runtime = createOpenAiRuntimeForTest(); prepareStub(runtime);
       const duplicated = `${declared()}\n${renderConclusionContractSidecar(claimed)}`;

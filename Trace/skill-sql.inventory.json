@@ -17612,7 +17612,7 @@
     },
     "startup_analysis": {
       "source_file": "backend/skills/composite/startup_analysis.skill.yaml",
-      "source_sha256": "1c29d77206e96bcebd17d2eb78ff8f36ef33384e61393103588476b8d1b923de",
+      "source_sha256": "8c1bf5a38d906e39a6f1d4430b5946930f50b15a3a389f49dcebb63d8e74b2bf",
       "type": "composite",
       "execution": "steps",
       "declared_modules": [
@@ -17700,7 +17700,7 @@
     },
     "startup_binder_in_range": {
       "source_file": "backend/skills/atomic/startup_binder_in_range.skill.yaml",
-      "source_sha256": "a924e41844bc13e2c2d600873730aff1e3f144c87cc03253261784d0ce7ad078",
+      "source_sha256": "f8501871e41d8a520b4e178ae2e1ca95ebcb94eae09be26d6bca6f380a5eee86",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [
@@ -18511,7 +18511,7 @@
     },
     "startup_main_thread_file_io_in_range": {
       "source_file": "backend/skills/atomic/startup_main_thread_file_io_in_range.skill.yaml",
-      "source_sha256": "77d5bc6d4a5f3e1318e51c1416e53dcafd7e9ce1378d2e1f7cad524529e7a0b2",
+      "source_sha256": "339af7b0f12c8f2d22177026b1aaf2cb39f860016191544bf28833db40d9a076",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [

@@ -232,13 +232,13 @@ describe('typed prompt with real strategy assets', () => {
     const examples = [...template.matchAll(/^```json\n([\s\S]*?)\n```$/gm)]
       .filter(match => !match[1].includes('{{'))
       .map(match => JSON.parse(match[1]));
-    const example = examples.find(value => value.kind === 'numeric');
-    expect(example).toBeDefined();
-    const parsed = parseConclusionContractSidecar(`${CONCLUSION_CONTRACT_SIDECAR_MARKER}\n\`\`\`json\n${JSON.stringify({
-      schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
-      conclusions: [], clusters: [], evidenceChain: [], claims: [example],
-      relationProposals: [], uncertainties: [], nextSteps: [],
-    })}\n\`\`\`\n-->`);
+    const example = examples.find(value => value.schemaVersion === 'conclusion_contract_v1');
+    const numeric = example.claims[0].semantics.numeric;
+    expect(numeric).toMatchObject({operator: 'eq', value: 7.123456, unit: 'ms', presentation: {
+      decimalPlaces: 1, rounding: 'half_away_from_zero', quotes: [{text: '7.1 ms'}]}});
+    // Verify the complete rendered example; the harness must not supply missing
+    // numeric/scope/reference fields the model would also have to guess.
+    const parsed = parseConclusionContractSidecar(`${CONCLUSION_CONTRACT_SIDECAR_MARKER}\n\`\`\`json\n${JSON.stringify(example)}\n\`\`\`\n-->`);
     expect(parsed.status).toBe('valid');
     expect(parsed.bindingEligibility).toBe('eligible');
     const claim = parsed.contract!.claims![0];
@@ -249,7 +249,7 @@ describe('typed prompt with real strategy assets', () => {
       context: {traceId: 'trace-template-example', traceSide: 'current', producerKind: 'invoke_skill'},
       cells: [{column: ref.column!, rowIndex: ref.rowIndex!, value: ref.value}],
     };
-    bindCapturedAnchorFacts(anchor, captureEvidenceTable({columns: [ref.column!], rows: [{[ref.column!]: ref.value!}]}, {
+    bindCapturedAnchorFacts(anchor, captureEvidenceTable({columns: [ref.column!], rows: [{[ref.column!]: 7.123456}]}, {
       [ref.column!]: {unit: 'ms', origin: {kind: 'skill_literal', skillId: 'example', stepId: 'metric',
         definitionFingerprint: 'template-example-capture'}},
     }), 0);
@@ -354,12 +354,13 @@ describe('typed prompt with real strategy assets', () => {
       expect(parsed.contract?.evidenceChain).toEqual([{conclusionId: expect.any(String), text: expect.any(String)}]);
       expect(parsed.contract?.uncertainties).toEqual([expect.any(String)]);
       expect(parsed.contract?.nextSteps).toEqual([expect.any(String)]);
-      expect(parsed.contract?.claims).toEqual([{id: expect.any(String), text: expect.any(String), kind: 'inference', references: [],
-        semantics: {schemaVersion: 'claim_semantics@1', predicate: 'example.hypothesis', polarity: 'affirmed',
-          discourse: 'hypothetical', quantifier: 'one', modality: 'possible', scope: {population: 'selected_interval'}}}]);
+      expect(parsed.contract?.claims).toHaveLength(1);
+      expect(parsed.contract?.claims?.[0]).toMatchObject({id: expect.any(String), text: expect.any(String), kind: 'numeric',
+        semantics: {schemaVersion: 'claim_semantics@1', predicate: 'numeric.cell', polarity: 'affirmed',
+          discourse: 'asserted', quantifier: 'one', modality: 'certain', scope: {population: 'cited_rows'}}});
       const sampleClaim = parsed.contract!.claims![0];
       const sampleProof = runDeterministicClaimVerifier({claimSupport: [{claimId: sampleClaim.id!,
-        kind: 'inference', text: sampleClaim.text, semantics: sampleClaim.semantics,
+        kind: sampleClaim.kind!, text: sampleClaim.text, semantics: sampleClaim.semantics,
         bindingEligibility: 'eligible', anchors: [], supportLevel: 'partial'}]});
       expect(sampleProof.passed).toBe(false);
       expect(sampleProof.claimResults[0].deterministicProof.status).not.toBe('proved');

@@ -33,7 +33,7 @@ export type {SemanticIssueCode} from './finalSemanticIssueCodes';
 import {expandSemanticSourceSnapshot} from './evidence/semanticSourceSnapshot';
 export {FINAL_SEMANTIC_INPUT_BYTE_LIMIT} from './finalSemanticLimits';
 
-export const FINAL_SEMANTIC_RULE_VERSION = 'final_semantics@2';
+export const FINAL_SEMANTIC_RULE_VERSION = 'final_semantics@3';
 const SEMANTIC_LOCATION_CATALOG_ENTRY_LIMIT = 512;
 const SEMANTIC_LOCATION_CATALOG_BYTE_LIMIT = 64 * 1024;
 const SEMANTIC_RESPONSE_DEGRADATION_LIMIT = 24;
@@ -51,6 +51,8 @@ export interface FinalSemanticSnapshot {
   protocolDiagnostics?: unknown;
   /** Detached prepared projection only; serialized metadata is never proof. */
   evidenceSnapshot: unknown;
+  /** Backend calculation for explicit body bindings, distinct from whole-claim consistency. */
+  numericPresentation?: ReadonlyArray<import('../types/claimVerification').NumericPresentationAssessment & {claimId: string}>;
   sourceUse?: SourceUseDecisionV1;
   capabilitySnapshot?: unknown;
   reportRequirements?: PinnedAnalysisReportRequirements;

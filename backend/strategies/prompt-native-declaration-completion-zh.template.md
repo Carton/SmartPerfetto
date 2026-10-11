@@ -11,6 +11,11 @@
 
 严格使用以下框架：独立的 `<!-- smartperfetto:conclusion-contract@1` 起始行，第二行是三个反引号紧接 json，完整 JSON 后是独立的三个反引号行和 `-->` 行。不要再包一层 Markdown fence；JSON 字符串中的 `-->` 要编码为 `\u002d\u002d\u003e`，解码值保持不变。`invalid_framing` 修复边界与字段格式，`invalid_json` 修复序列化，`invalid_relation_proposal` 按附加的端点和 proofBindings 合同修复；保留原有 relationProposals 数量及有效 ID，不得删除或替换提案来避错。
 
+JSON 用紧凑序列化，只减少字符串外的格式空白；保留所有字段、条目、值、有效 ID 和含义，不截断、不删减。不要输出注释、占位省略号或未转义的字符串换行。
+
+序列化诊断（null 表示不适用；`offsetUtf16` 若存在，是从 JSON 正文首字符起、从 0 计数的 UTF-16 位置，不包含外围注释和 fence，换行按 LF 计；它只定位首个语法错误，修正后仍须校验整份声明）：
+{{serialization_diagnostic}}
+
 本轮意图：
 {{turn_intent}}
 

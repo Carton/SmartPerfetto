@@ -834,6 +834,15 @@ describe('startup primitive unit authority', () => {
     ['startup_breakdown_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_breakdown_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_breakdown_in_range', 'percent', '%', 'candidate', 'unit_authority_unknown'],
+    ['startup_main_thread_file_io_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_file_io_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_file_io_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_file_io_in_range', 'all_total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_file_io_in_range', 'all_percent_of_startup', '%', 'candidate', 'unit_authority_unknown'],
+    ['startup_binder_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_binder_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_binder_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_binder_in_range', 'all_percent_of_startup', '%', 'candidate', 'unit_authority_unknown'],
   ])('retains %s explicit units without inferring ambiguous percentage scale',
     async (name, column, unit, status, reason) => {
     const skill = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic', `${name}.skill.yaml`), 'utf8')) as any;
@@ -850,14 +859,16 @@ describe('startup primitive unit authority', () => {
     const params = {...selector, startup_id: 1, startup_type: 'cold', start_ts: 0, end_ts: 10000000, min_dur_ns: 0, top_k: 15};
     let executedSkill = name;
     let inputNames = skill.inputs.map((input: any) => input.name);
-    if (name === 'startup_breakdown_in_range') {
+    const parentStepId: Record<string, string> = {startup_breakdown_in_range: 'startup_breakdown',
+      startup_main_thread_file_io_in_range: 'main_thread_file_io', startup_binder_in_range: 'startup_binder'};
+    if (parentStepId[name]) {
       const parent = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/composite/startup_analysis.skill.yaml'), 'utf8')) as any;
-      const parentStep = parent.steps.find((step: any) => step.id === 'startup_breakdown');
+      const parentStep = parent.steps.find((step: any) => step.id === parentStepId[name]);
       const fixture = normalizeSkillDefinition({
-        name: 'startup_breakdown_parent_fixture', version: '1.0', type: 'composite', category: 'app_lifecycle', tier: 'B',
-        meta: {display_name: 'startup breakdown parent fixture', description: 'test fixture'}, inputs: parent.inputs,
+        name: 'startup_unit_parent_fixture', version: '1.0', type: 'composite', category: 'app_lifecycle', tier: 'B',
+        meta: {display_name: 'startup unit parent fixture', description: 'test fixture'}, inputs: parent.inputs,
         steps: [{...parentStep, condition: undefined, synthesize: undefined}],
-      }, 'startup_breakdown_parent_fixture.skill.yaml')!;
+      }, 'startup_unit_parent_fixture.skill.yaml')!;
       executor.registerSkill(fixture);
       executedSkill = fixture.name;
       inputNames = parent.inputs.map((input: any) => input.name);

@@ -57,6 +57,9 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
   currentRead?: boolean;
   runId?: string;
   wrongReferenceValue?: number;
+  toolCallReference?: boolean;
+  selectorReference?: boolean;
+  fieldIdentity?: 'upid';
   taskKind?: 'fact' | 'investigation' | 'acknowledgement';
   claimKind?: 'inference';
   /** No declaration at all: the canonical result is `legacy_unchecked`. */
@@ -88,7 +91,9 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
   const cell = capturedCell ?? numericCell;
   const body = options.body ?? (cell ? `The captured value is ${cell.displayed}.`
     : options.source ? 'The captured name identifies the source marker.' : 'The captured value is 49.');
-  const ref = {evidenceRefId: 'data:count', rowIndex: 0, column: options.source ? 'name' : 'count',
+  const ref = {...(options.toolCallReference ? {sourceToolCallId: 'sql:run-call'} : {evidenceRefId: 'data:count'}),
+    ...(options.selectorReference ? {rowSelector: {count: numericCell?.value ?? 49}} : {rowIndex: 0}),
+    column: options.source ? 'name' : 'count',
     value: options.source ? options.source.declaredMarker ?? options.source.marker
       // A captured.cell proposition declares its expected primitive as a string.
       : capturedCell ? String(capturedCell.value) : options.wrongReferenceValue ?? numericCell?.value ?? 49};
@@ -110,11 +115,13 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
   const envelope = createDataEnvelope({columns: [ref.column],
     rows: [[options.source?.marker ?? (capturedCell ? String(capturedCell.value) : numericCell?.value ?? 49)]]}, {
     type: 'sql_result', source: 'execute_sql', title: 'Count', evidenceRefId: 'data:count',
+    ...(options.toolCallReference ? {sourceToolCallId: 'sql:run-call'} : {}),
     traceId: 'trace', traceSide: 'current', executionStatus: 'observed', identityResolution: options.identity,
     scopeProvenance: options.scope});
   const store = new ArtifactStore();
   if (options.capture !== false) store.registerStandaloneEvidenceCapture(captureEvidenceTable(envelope.data, {
-    count: {unit: cell?.unit ?? 'count', origin: {kind: 'native_producer', definitionFingerprint: 'count-v1'}},
+    count: {unit: cell?.unit ?? 'count', ...(options.fieldIdentity ? {identityRole: options.fieldIdentity} : {}),
+      origin: {kind: 'native_producer', definitionFingerprint: 'count-v1'}},
   }), {meta: envelope.meta, display: envelope.display});
   let sourceUse: SourceUseDecisionV1 | undefined;
   if (options.source) {
@@ -1038,6 +1045,247 @@ describe('shared final analysis boundary', () => {
     expect(verification?.issues.some(issue => issue.severity === 'error' && issue.code === 'semantic_numeric_mismatch'))
       .toBe(true);
     expect(verification?.issues.some(issue => issue.code === 'semantic_numeric_display_rounding')).toBe(false);
+  });
+
+  describe('explicit numeric presentation bindings', () => {
+    const numericCell = (displayed: string, text = displayed) => ({value: 32.57614380379747, unit: 'ms', displayed,
+      numeric: {operator: 'eq' as const, value: 32.57614380379747, unit: 'ms', presentation: {
+        schemaVersion: 'numeric_presentation@1' as const, unit: 'ms', decimalPlaces: 1,
+        rounding: 'half_away_from_zero' as const, quotes: [{text}],
+      }}});
+
+    it('checks the displayed value before review and retains a separate matched result', async () => {
+      const target = fixture({numericCell: numericCell('32.6 ms')});
+      const original = structuredClone(target.result.conclusionContract);
+      const final = await target.run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'verified',
+        deterministicProof: {status: 'proved'}, numericPresentation: {schemaVersion: 'numeric_presentation_assessment@1',
+          status: 'matched', reason: 'display_matches', locations: [{start: 22, end: 29}]}});
+      expect(target.dispatch).toHaveBeenCalledTimes(1);
+      expect(target.dispatch.mock.calls[0][0].prompt).toContain('numericPresentation');
+      expect(target.dispatch.mock.calls[0][0].prompt).toContain('display_matches');
+      expect(final.result.conclusionContract?.claims).toEqual(original?.claims);
+      expect(final.result.conclusion).toContain('32.6 ms');
+    });
+
+    it('rejects an incorrect bound number even when the reviewer would say consistent', async () => {
+      const final = await fixture({numericCell: numericCell('32.7 ms'), report: true}).run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', passed: false,
+        claimResults: [{status: 'unsupported', deterministicProof: {status: 'proved'},
+          numericPresentation: {status: 'mismatch', reason: 'display_value_mismatch'}}]});
+      expect(final.result.terminationMessage).toContain('正文数值与原始证据的换算或舍入结果不符');
+    });
+
+    it('does not turn an unresolved binding into verification through model agreement', async () => {
+      const final = await fixture({numericCell: numericCell('32.6 ms', '99.9 ms'), report: true}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'partial',
+        numericPresentation: {status: 'not_checked', reason: 'quote_unresolved'}});
+      expect(final.result.claimVerificationResult?.passed).toBe(false);
+    });
+
+    it('retains a reviewer disagreement without asserting an arithmetic error or upgrading the claim', async () => {
+      const body = 'The captured value is 32.6 ms.';
+      const final = await fixture({numericCell: numericCell('32.6 ms'), dispatch: async () => ({status: 'ok',
+        text: JSON.stringify({schemaVersion: 'final_semantic_response@1',
+          bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+          claims: [{claimId: 'count', consistency: 'inconsistent', contentLocations: [{start: 0, end: body.length, text: body}],
+            issues: [{code: 'numeric_mismatch', contentLocations: [{start: 22, end: 29, text: '32.6 ms'}]}]}],
+          omissions: [], requirements: []})})}).run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', passed: false,
+        claimResults: [{status: 'partial', numericPresentation: {status: 'matched'},
+          semanticReview: {consistency: 'inconsistent'}}],
+        issues: expect.arrayContaining([expect.objectContaining({severity: 'warning', code: 'numeric_presentation_review_disagreement'})])});
+    });
+
+    it.each([
+      {value: 32576143, unit: 'ns', displayed: '32.6 ms', displayUnit: 'ms', decimals: 1, status: 'matched'},
+      {value: 32.576, unit: 'ms', displayed: '32.6 毫秒', displayUnit: 'ms', decimals: 1, status: 'matched'},
+      {value: 32576143, unit: 'ns', displayed: '0.033 秒', displayUnit: 's', decimals: 3, status: 'matched'},
+      {value: 32600, unit: 'ns', displayed: '32.6 微秒', displayUnit: 'µs', decimals: 1, status: 'matched'},
+      {value: 326, unit: 'ns', displayed: '326 纳秒', displayUnit: 'ns', decimals: 0, status: 'matched'},
+      {value: 32.576, unit: 'ms', displayed: '32.7 毫秒', displayUnit: 'ms', decimals: 1, status: 'mismatch'},
+      {value: 32.576, unit: 'ms', displayed: '32.6 分钟', displayUnit: 'ms', decimals: 1, status: 'not_checked'},
+      {value: '32576143.80379747', unit: 'ns', displayed: '32.6 ms', displayUnit: 'ms', decimals: 1, status: 'matched'},
+      {value: -2.25, unit: 'ms', displayed: '-2.3 ms', displayUnit: 'ms', decimals: 1, status: 'matched'},
+      {value: 0.326, unit: 'ratio', displayed: '32.6%', displayUnit: '%', decimals: 1, status: 'matched'},
+      {value: 1048576, unit: 'B', displayed: '1.0 MiB', displayUnit: 'MiB', decimals: 1, status: 'matched'},
+      {value: 49, unit: 'frames', displayed: '49 count', displayUnit: 'count', decimals: 0, status: 'matched'},
+      {value: 49, unit: 'count', displayed: '49', displayUnit: 'count', decimals: 0, status: 'matched'},
+      {value: 61.995675, unit: 'ms', displayed: '61.99 ms', displayUnit: 'ms', decimals: 2, status: 'mismatch'},
+      {value: 100, unit: 'count', displayed: '102', displayUnit: 'count', decimals: 0, status: 'mismatch'},
+      {value: 130, unit: 'ms', displayed: '380 ms', displayUnit: 'ms', decimals: 0, status: 'mismatch'},
+      {value: 380, unit: 'ms', displayed: '380 ms', displayUnit: 'ms', decimals: 0, status: 'matched'},
+      {value: 32.576, unit: 'ms', displayed: '32.6 B', displayUnit: 'B', decimals: 1, status: 'mismatch'},
+      {value: 49, unit: 'count', displayed: '49.0', displayUnit: 'count', decimals: 1, status: 'not_checked'},
+      {value: 0.04, unit: 'ms', displayed: '0.0 ms', displayUnit: 'ms', decimals: 1, status: 'not_checked'},
+      {value: 32.576, unit: 'ms', displayed: '32.6 sec', displayUnit: 'sec', decimals: 1, status: 'not_checked'},
+    ])('calculates $value $unit -> $displayed independently of semantic agreement', async sample => {
+      const final = await fixture({numericCell: {...sample, numeric: {operator: 'eq', value: sample.value, unit: sample.unit,
+        presentation: {schemaVersion: 'numeric_presentation@1', unit: sample.displayUnit, decimalPlaces: sample.decimals,
+          rounding: 'half_away_from_zero', quotes: [{text: sample.displayed}]}}}}).run();
+      const checked = final.result.claimVerificationResult!;
+      expect(checked.claimResults[0].numericPresentation?.status).toBe(sample.status);
+      expect(checked.passed).toBe(sample.status === 'matched');
+      if (sample.status === 'mismatch') expect(checked.status).toBe('failed');
+    });
+
+    it.each([
+      ['substring of longer number', '132.6 ms', '32.6 ms'],
+      ['lost sign', '-32.6 ms', '32.6 ms'],
+      ['unit suffix', '32.6 msec', '32.6 ms'],
+      ['identifier prefix', 'P32.6 ms', '32.6 ms'],
+      ['duplicate quote', '32.6 ms and 32.6 ms', '32.6 ms'],
+      ['scientific notation', '3.26e1 ms', '3.26e1 ms'],
+      ['unit split by markup', '**32.6** ms', '**32.6** ms'],
+    ])('leaves %s unresolved rather than blessing a convenient substring', async (_label, displayed, text) => {
+      const final = await fixture({numericCell: numericCell(displayed, text), report: true}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'partial',
+        numericPresentation: {status: 'not_checked'}});
+    });
+
+    it('binds repeated occurrences explicitly and rejects duplicated locations', async () => {
+      const cell = numericCell('32.6 ms and 32.6 ms', '32.6 ms');
+      Object.assign(cell.numeric.presentation, {quotes: [{text: '32.6 ms', occurrence: 0}, {text: '32.6 ms', occurrence: 1}]});
+      const final = await fixture({numericCell: cell}).run();
+      expect(final.result.claimVerificationResult).toMatchObject({passed: true,
+        claimResults: [{numericPresentation: {status: 'matched', locations: [{start: 22, end: 29}, {start: 34, end: 41}]}}]});
+      Object.assign(cell.numeric.presentation, {quotes: [{text: '32.6 ms', occurrence: 0}, {text: '32.6 ms', occurrence: 0}]});
+      expect((await fixture({numericCell: cell}).run()).result.claimVerificationResult?.claimResults[0])
+        .toMatchObject({status: 'partial', numericPresentation: {status: 'not_checked', reason: 'binding_conflict'}});
+    });
+
+    it('does not let two claims borrow the same body token', async () => {
+      const target = fixture({numericCell: numericCell('32.6 ms')});
+      const claim = target.result.conclusionContract!.claims![0];
+      target.result.conclusionContract!.claims!.push({...structuredClone(claim), id: 'second'});
+      const final = await target.run();
+      expect(final.result.claimVerificationResult?.claimResults).toHaveLength(2);
+      for (const checked of final.result.claimVerificationResult!.claimResults) {
+        expect(checked.numericPresentation).toMatchObject({status: 'not_checked', reason: 'binding_conflict'});
+      }
+      expect(final.result.claimVerificationResult?.passed).toBe(false);
+    });
+
+    it('does not hide a known mismatch behind a second claim using the same token', async () => {
+      const target = fixture({numericCell: numericCell('32.7 ms')});
+      target.result.conclusionContract!.claims!.push({...structuredClone(target.result.conclusionContract!.claims![0]), id: 'second'});
+      const verification = (await target.run()).result.claimVerificationResult!;
+      expect(verification.status).toBe('failed');
+      expect(verification.claimResults.every(claim => claim.numericPresentation?.status === 'mismatch')).toBe(true);
+    });
+
+    it('recomputes the result instead of trusting a receipt copied from a different answer', async () => {
+      const original = (await fixture({numericCell: numericCell('32.6 ms')}).run()).result;
+      const forged = fixture({numericCell: numericCell('32.7 ms')});
+      forged.result.claimVerificationResult = structuredClone(original.claimVerificationResult);
+      const final = (await forged.run()).result;
+      expect(final.claimVerificationResult).toMatchObject({status: 'failed',
+        claimResults: [{numericPresentation: {status: 'mismatch'}}]});
+      expect(final.claimVerificationResult?.claimResults[0].numericPresentation?.binding.candidate.conclusionFingerprint)
+        .toBe(analysisDeliveryFingerprint(final.conclusion));
+    });
+
+    it('keeps proof and original capture requirements even with a correct display binding', async () => {
+      for (const options of [{capture: false}, {wrongReferenceValue: 32.6}]) {
+        const final = await fixture({numericCell: numericCell('32.6 ms'), ...options}).run();
+        expect(final.result.claimVerificationResult?.claimResults[0].numericPresentation)
+          .toMatchObject({status: 'not_checked', reason: 'proposition_not_proved'});
+        expect(final.result.claimVerificationResult?.passed).toBe(false);
+      }
+      const cell = numericCell('32.6 ms');
+      cell.numeric.value = 32.6;
+      const final = await fixture({numericCell: cell}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'unsupported',
+        deterministicProof: {status: 'rejected'}, numericPresentation: {status: 'not_checked'}});
+    });
+
+    it.each([{toolCallReference: true}, {selectorReference: true}])('resolves an issued alternative reference (%#)', async options => {
+      const final = await fixture({numericCell: numericCell('32.6 ms'), ...options}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({deterministicProof: {
+        status: 'proved', reason: 'numeric_operator_proved'}});
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'verified',
+        numericPresentation: {status: 'matched', reason: 'display_matches', source: {rowIndex: 0, column: 'count'}}});
+    });
+
+    it('never applies presentation rounding to an identity field', async () => {
+      const final = await fixture({numericCell: numericCell('32.6 ms'), fieldIdentity: 'upid'}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0].numericPresentation)
+        .toMatchObject({status: 'not_checked', reason: 'identity_field'});
+      expect(final.result.claimVerificationResult?.passed).toBe(false);
+    });
+
+    it('does not turn an invalid sentence-shaped quote into another claim\'s binding conflict', async () => {
+      const target = fixture({numericCell: numericCell('32.6 ms', 'The captured value is 32.6 ms.')});
+      const second = structuredClone(target.result.conclusionContract!.claims![0]);
+      second.id = 'second';
+      second.semantics!.numeric!.presentation!.quotes = [{text: '32.6 ms'}];
+      target.result.conclusionContract!.claims!.push(second);
+      const checked = (await target.run()).result.claimVerificationResult!.claimResults;
+      expect(checked[0].numericPresentation).toMatchObject({status: 'not_checked', reason: 'unsupported_display_format'});
+      expect(checked[1].numericPresentation?.status).toBe('matched');
+    });
+
+    it('does not replace the authentic captured value with a mutable display table', async () => {
+      const target = fixture({numericCell: numericCell('32.7 ms')});
+      (target.envelope.data as {rows: number[][]}).rows[0][0] = 32.7;
+      expect((await target.run()).result.claimVerificationResult?.claimResults[0].numericPresentation)
+        .toMatchObject({status: 'mismatch', reason: 'display_value_mismatch'});
+    });
+
+    it('retains the numeric result when semantic review is unavailable', async () => {
+      const final = await fixture({numericCell: numericCell('32.6 ms'),
+        dispatch: async () => ({status: 'unavailable', reason: 'provider_error'})}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'partial',
+        numericPresentation: {status: 'matched'}});
+      expect(final.result.claimVerificationResult?.passed).toBe(false);
+    });
+
+    it('keeps a whole-sentence contradiction outside the numeric disagreement exception', async () => {
+      const final = await fixture({numericCell: numericCell('32.6 ms'), inconsistent: true}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'unsupported',
+        numericPresentation: {status: 'matched'}});
+      expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({severity: 'error',
+        code: 'semantic_numeric_mismatch'}));
+    });
+
+    it('retains bindings and separate outcomes through owner, snapshot and closed evidence projections', async () => {
+      const final = await fixture({numericCell: numericCell('32.6 ms'), nativeProjection: true}).run();
+      const checked = final.result.claimVerificationResult!.claimResults[0].numericPresentation;
+      expect(checked?.status).toBe('matched');
+      expect(projectOwnerAnalysisResult(final.result.sessionId, final.result, 'en').claimVerificationResult?.claimResults[0].numericPresentation).toEqual(checked);
+      expect(copyAnalysisResultForSnapshot(final.result).claimVerificationResult?.claimResults[0].numericPresentation).toEqual(checked);
+      expect(projectPrivateAnalysisResult(final.result.sessionId, final.result, 'en').claimVerificationResult?.claimResults[0].numericPresentation).toBeUndefined();
+    });
+
+    it('keeps a proven wrong display when another quote is unresolved', async () => {
+      const cell = numericCell('32.7 ms');
+      cell.numeric.presentation.quotes.push({text: 'missing'});
+      expect((await fixture({numericCell: cell}).run()).result.claimVerificationResult?.claimResults[0])
+        .toMatchObject({status: 'unsupported', numericPresentation: {status: 'mismatch'}});
+    });
+
+    it('does not verify a correct literal that the semantic review never located', async () => {
+      const body = 'The captured value is 32.6 ms.';
+      const final = await fixture({numericCell: numericCell('32.6 ms'), dispatch: async () => ({status: 'ok',
+        text: JSON.stringify({schemaVersion: 'final_semantic_response@1',
+          bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+          claims: [{claimId: 'count', consistency: 'consistent', contentLocations: [{start: 0, end: 18, text: body.slice(0, 18)}],
+            issues: []}], omissions: [], requirements: []})})}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'partial',
+        numericPresentation: {status: 'matched'}, semanticReview: {consistency: 'consistent'}});
+    });
+
+    it('keeps scope contradictions even when the numeric literal matches', async () => {
+      const body = 'The total is 32.6 ms.';
+      const final = await fixture({body, numericCell: numericCell('32.6 ms'), dispatch: async () => ({status: 'ok',
+        text: JSON.stringify({schemaVersion: 'final_semantic_response@1',
+          bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+          claims: [{claimId: 'count', consistency: 'inconsistent', contentLocations: [{start: 0, end: body.length, text: body}],
+            issues: [{code: 'scope_mismatch', contentLocations: [{start: 0, end: body.length, text: body}]}]}],
+          omissions: [], requirements: []})})}).run();
+      expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'unsupported',
+        numericPresentation: {status: 'matched'}});
+    });
   });
 
   describe('numeric display precision', () => {

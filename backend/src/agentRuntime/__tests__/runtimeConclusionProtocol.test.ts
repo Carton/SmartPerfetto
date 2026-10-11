@@ -193,6 +193,49 @@ describe('runtime native declaration completion', () => {
     expect(prompt).toContain('"ordinal":2');
   });
 
+  it.each(['en', 'zh-CN'] as const)('locates invalid JSON without copying parser messages into diagnostics in %s', outputLanguage => {
+    const payload = '{"private":"🔐秘密 CANARY"}, {"claims":[]}';
+    const malformed = `<!-- smartperfetto:conclusion-contract@1\r\n\`\`\`json\r\n${payload}\r\n\`\`\`\r\n-->`;
+    const request = repair(`${body}\n${malformed}`)!;
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const prompt = buildNativeDeclarationCompletionPrompt({request, intent: intent('investigation'), outputLanguage});
+      const diagnosticLine = prompt.split('\n').find(line => line.startsWith('{"payloadChars":'))!;
+      expect(JSON.parse(diagnosticLine)).toEqual({payloadChars: payload.length, offsetUtf16: payload.indexOf(',')});
+      expect(diagnosticLine).not.toContain('CANARY');
+      expect(log.mock.calls.map(call => String(call[0]))).toEqual([
+        `[DeclarationRepair] JSON syntax: payloadChars=${payload.length} offsetUtf16=${payload.indexOf(',')}`,
+      ]);
+      expect(prompt).toContain(outputLanguage === 'en' ? 'outside strings' : '字符串外');
+      expect(prompt).toContain(outputLanguage === 'en' ? 'without truncation or omissions' : '不截断、不删减');
+      // Diagnostics do not turn malformed bytes into an accepted declaration.
+      expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: malformed})).toBeUndefined();
+    } finally { log.mockRestore(); }
+  });
+
+  it('omits a position when the parser reports only an unrecognized token with private text', () => {
+    const payload = 'PRIVATE_CANARY at position 1';
+    const malformed = `<!-- smartperfetto:conclusion-contract@1\n\`\`\`json\n${payload}\n\`\`\`\n-->`;
+    const request = repair(`${body}\n${malformed}`)!;
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const prompt = buildNativeDeclarationCompletionPrompt({request, intent: intent('investigation'), outputLanguage: 'en'});
+      const diagnosticLine = prompt.split('\n').find(line => line.startsWith('{"payloadChars":'))!;
+      expect(JSON.parse(diagnosticLine)).toEqual({payloadChars: payload.length});
+      expect(log.mock.calls.map(call => String(call[0])).join('\n')).not.toContain('PRIVATE_CANARY');
+    } finally { log.mockRestore(); }
+  });
+
+  it('accepts compact JSON with the same claim values and immutable body', () => {
+    const request = repair(`${body}\n${rejected}`)!;
+    const expanded = contract([claim('a'), claim('b')]);
+    const payload = inspectCandidateProtocol(expanded).sidecar.rawPayload;
+    const compact = `<!-- smartperfetto:conclusion-contract@1\n\`\`\`json\n${JSON.stringify(payload)}\n\`\`\`\n-->`;
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: compact})!;
+    expect(inspectCandidateProtocol(accepted).sidecar.rawPayload).toEqual(payload);
+    expect(inspectCandidateProtocol(accepted).canonicalBody.trim()).toBe(body);
+  });
+
   it('delivers the original body with a repaired declaration that keeps every declared claim', () => {
     const request = repair(`${body}\n\n${rejected}`)!;
     const accept = (candidate: string) => acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate});
@@ -231,11 +274,15 @@ describe('runtime native declaration completion', () => {
         candidate: `${original}\n\n${invalid}`})).toBeUndefined();
       expect(acceptNativeDeclarationCompletion({request, completion: {status: 'unknown'},
         candidate: `${original}\n\n${contract([claim('a')])}`})).toBeUndefined();
+      expect(acceptNativeDeclarationCompletion({request, completion: {status: 'incomplete', reason: 'output_limit'},
+        candidate: contract([claim('a')])})).toBeUndefined();
       const lines = log.mock.calls.map(call => String(call[0]));
       expect(lines).toEqual([
         '[DeclarationRepair] completion rejected: request=missing_declaration reason=declaration_not_valid ' +
           'repaired=invalid sidecar=invalid issues=invalid_json claimDiagnostics=none',
         '[DeclarationRepair] completion rejected: request=missing_declaration reason=completion_not_completed completion=unknown',
+        '[DeclarationRepair] completion rejected: request=missing_declaration reason=completion_not_completed ' +
+          'completion=incomplete nativeReason=output_limit',
       ]);
       expect(lines.join('\n')).not.toContain('HWC');
     } finally {
@@ -533,6 +580,19 @@ describe('runtime native declaration completion', () => {
         .toBe('declaration_not_valid');
       expect(rejectionReason(contract([claim('a'), claim('b', {text: 'a holds.'})])))
         .toBe('duplicate_claim_content');
+    });
+
+    it('prevents declaration repair from changing a valid numeric display binding', () => {
+      const presentation = {schemaVersion: 'numeric_presentation@1', unit: 'ms', decimalPlaces: 1,
+        rounding: 'half_away_from_zero', quotes: [{text: '32.6 ms'}]};
+      const numeric = {operator: 'eq', value: 32.576, unit: 'ms', presentation};
+      const valid = claim('a', {semantics: {...semantics, numeric}});
+      const request = repair(`${body}\n\n${contract([valid,
+        claim('b', {semantics: {...semantics, scope: {population: 'elsewhere'}}})])}`)!;
+      expect(accept(request, contract([valid, claim('b')]))).toBeDefined();
+      const changed = claim('a', {semantics: {...semantics, numeric: {...numeric,
+        presentation: {...presentation, quotes: [{text: '32.7 ms'}]}}}});
+      expect(accept(request, contract([changed, claim('b')]))).toBeUndefined();
     });
 
     it('rejects a repair whose own root is invalid', () => {

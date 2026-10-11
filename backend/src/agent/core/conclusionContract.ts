@@ -97,6 +97,16 @@ export interface ConclusionContractClaimItem {
   semanticsParseIssues?: ConclusionContractParseIssue[];
 }
 
+/** A proposed display binding, never a proof or a replacement for the exact proposition. */
+export interface NumericPresentationDeclaration {
+  schemaVersion: 'numeric_presentation@1';
+  unit: string;
+  decimalPlaces: number;
+  rounding: 'half_away_from_zero';
+  /** Exact numeric literal including unit; occurrence is zero-based when repeated. */
+  quotes: Array<{text: string; occurrence?: number}>;
+}
+
 export interface ClaimSemanticsV1 {
   schemaVersion: 'claim_semantics@1';
   /** Unknown rule IDs are valid declarations but supply no proof. */
@@ -113,7 +123,8 @@ export interface ClaimSemanticsV1 {
     timeRangeNs?: {start: string; end: string};
   };
   /** The proposition value is distinct from a cited cell's value. */
-  numeric?: {operator: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte'; value: number | string; unit: string};
+  numeric?: {operator: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte'; value: number | string; unit: string;
+    presentation?: NumericPresentationDeclaration};
 }
 
 export interface ConclusionContractParseIssue {
@@ -512,12 +523,24 @@ function decimalNanoseconds(value: unknown): value is string | number {
 
 /** The first failing part of a numeric proposition, in the order the schema lists it. */
 function numericFailure(numeric: unknown): ConclusionClaimNumericSubreason | undefined {
-  if (!record(numeric) || !keysWithin(numeric, ['operator', 'value', 'unit'])) return 'shape';
+  if (!record(numeric) || !keysWithin(numeric, ['operator', 'value', 'unit', 'presentation'])) return 'shape';
   if (!oneOf(numeric.operator, CONCLUSION_PROTOCOL_VALUES.operator)) return 'operator';
   if (!((typeof numeric.value === 'number' && Number.isFinite(numeric.value)) ||
     (typeof numeric.value === 'string' && /^-?(?:\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(numeric.value)))) return 'value';
   if (typeof numeric.unit !== 'string' || !numeric.unit.trim()) return 'unit';
+  if (hasOwn(numeric, 'presentation') && !validNumericPresentation(numeric.presentation)) return 'shape';
   return undefined;
+}
+
+function validNumericPresentation(value: unknown): value is NumericPresentationDeclaration {
+  return record(value) && keysWithin(value, ['schemaVersion', 'unit', 'decimalPlaces', 'rounding', 'quotes']) &&
+    value.schemaVersion === 'numeric_presentation@1' && value.rounding === 'half_away_from_zero' &&
+    typeof value.unit === 'string' && value.unit.length > 0 && value.unit.length <= 64 && value.unit === value.unit.trim() &&
+    Number.isSafeInteger(value.decimalPlaces) && Number(value.decimalPlaces) >= 0 && Number(value.decimalPlaces) <= 18 &&
+    Array.isArray(value.quotes) && value.quotes.length > 0 && value.quotes.length <= 16 && Array.from(value.quotes).every(quote =>
+      record(quote) && keysWithin(quote, ['text', 'occurrence']) &&
+      typeof quote.text === 'string' && quote.text.length > 0 && quote.text.length <= 256 &&
+      (!hasOwn(quote, 'occurrence') || (Number.isSafeInteger(quote.occurrence) && Number(quote.occurrence) >= 0)));
 }
 
 interface ClaimSemanticsFailure {

@@ -25,7 +25,7 @@ import {evidenceReferenceKey} from '../evidence/claimEvidencePreparation';
 import {compareRationals as compare, exactNumber, type Rational} from '../../utils/exactDecimal';
 import {referenceBindingFailureIsAdvisory} from '../evidence/evidenceReadView';
 import {classifyComparisonSides} from '../evidence/comparisonSides';
-import {declaredUnitAcceptsProducerDimension} from './claimUnits';
+import {claimUnitFor as unitFor, declaredUnitAcceptsProducerDimension, type ClaimUnit as Unit} from './claimUnits';
 
 export interface DeterministicClaimVerifierInput {
   claimSupport?: ClaimSupportV1[];
@@ -36,7 +36,6 @@ type CapturedFacts = NonNullable<ReturnType<typeof getCapturedAnchorFacts>>;
 type BoundAnchor = {anchor: EvidenceAnchorV1; facts: CapturedFacts};
 type BoundCell = BoundAnchor & {column: string; value: EvidenceScalar; field?: CapturedFieldSemantics};
 type Resolution<T> = {value: T} | {reason: string};
-type Unit = {dimension: string; numerator: bigint; denominator: bigint};
 
 const hasOwn = (value: object, key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, key);
 // `source_location` stays in the stored union for historical results; no current rule produces it.
@@ -55,37 +54,6 @@ export interface SupportedDeterministicClaimRule {
 export const SUPPORTED_DETERMINISTIC_CLAIM_RULES: readonly SupportedDeterministicClaimRule[] = Object.freeze(
   Object.entries(proofKinds).map(([id, proofKind]) => Object.freeze({id, proofKind})),
 );
-
-// These are explicit unit definitions, not aliases inferred from a column name.
-const units: Readonly<Record<string, Unit>> = {
-  ns: {dimension: 'time', numerator: 1n, denominator: 1n},
-  us: {dimension: 'time', numerator: 1000n, denominator: 1n},
-  'µs': {dimension: 'time', numerator: 1000n, denominator: 1n},
-  'μs': {dimension: 'time', numerator: 1000n, denominator: 1n},
-  ms: {dimension: 'time', numerator: 1000000n, denominator: 1n},
-  s: {dimension: 'time', numerator: 1000000000n, denominator: 1n},
-  count: {dimension: 'count', numerator: 1n, denominator: 1n},
-  frame: {dimension: 'frames', numerator: 1n, denominator: 1n},
-  frames: {dimension: 'frames', numerator: 1n, denominator: 1n},
-  event: {dimension: 'events', numerator: 1n, denominator: 1n},
-  events: {dimension: 'events', numerator: 1n, denominator: 1n},
-  ratio: {dimension: 'ratio', numerator: 1n, denominator: 1n},
-  '%': {dimension: 'ratio', numerator: 1n, denominator: 100n},
-  percent: {dimension: 'ratio', numerator: 1n, denominator: 100n},
-  B: {dimension: 'bytes', numerator: 1n, denominator: 1n},
-  bytes: {dimension: 'bytes', numerator: 1n, denominator: 1n},
-  KiB: {dimension: 'bytes', numerator: 1024n, denominator: 1n},
-  MiB: {dimension: 'bytes', numerator: 1048576n, denominator: 1n},
-  GiB: {dimension: 'bytes', numerator: 1073741824n, denominator: 1n},
-  Hz: {dimension: 'frequency', numerator: 1n, denominator: 1n},
-  kHz: {dimension: 'frequency', numerator: 1000n, denominator: 1n},
-  MHz: {dimension: 'frequency', numerator: 1000000n, denominator: 1n},
-  GHz: {dimension: 'frequency', numerator: 1000000000n, denominator: 1n},
-};
-
-function unitFor(unit: string | undefined): Unit | undefined {
-  return unit !== undefined && hasOwn(units, unit) ? units[unit] : undefined;
-}
 
 function exactPrimitiveMatch(expected: unknown, actual: unknown): boolean {
   if (expected === null || actual === null) return expected === actual;

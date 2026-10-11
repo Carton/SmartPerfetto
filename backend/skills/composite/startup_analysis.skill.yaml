@@ -533,7 +533,7 @@ steps:
           label: "启动类型"
           type: string
         - {name: all_percent_of_startup, label: "全部文件 IO 启动占比", type: number, hidden: true}
-        - {name: all_total_dur_ms, label: "全部文件 IO 总耗时", type: number, hidden: true}
+        - {name: all_total_dur_ms, label: "全部文件 IO 总耗时", type: number, unit: ms, hidden: true}
     params:
       package: "${package}"
       startup_id: "${startup_id}"

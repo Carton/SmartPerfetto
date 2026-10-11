@@ -462,7 +462,30 @@ propositions to numeric ones. Unknown review alone does not fail a focused answe
 full reports still require their report-assessment contract. The body, native completion and original claims
 are independent inputs; valid JSON and model agreement alone are not proof.
 
-Raw numeric equality remains separate from prose display precision. When the
+Raw numeric equality remains separate from prose display precision. The optional
+`numeric.presentation` declaration (`numeric_presentation@1`) binds body literals,
+occurrences, units and decimal places. Before semantic review,
+`numericPresentationAssessment.ts` checks fixed-decimal rounding with exact
+rationals, complete finite proof, immutable captures and producer units.
+Chinese time labels `纳秒/微秒/毫秒/秒` also resolve to their standard display
+units; these spellings never confer unit authority on a producer. Each
+claim's separate `numericPresentation` records `matched/mismatch/not_checked`,
+bound to the canonical candidate, original declaration fingerprint and captured
+cell. It changes neither the body nor the machine proposition. Identifiers are
+not rounded, counts stay integral, and nonzero displayed as zero remains unchecked.
+Unsupported or missing display protocols supply no proof.
+`final_semantics@3` receives these results but still checks subject, scope,
+aggregation, negation, comparison and causality. Model agreement cannot override
+a deterministic display mismatch. A numeric dispute located entirely within a
+matched literal becomes `numeric_presentation_review_disagreement` and stays
+partial; other semantic errors retain their standing. Every bound literal must
+also lie inside the semantic review's claim locations before joint verification.
+Declaration recovery retains the complete semantics. Reports, CLI and owner
+snapshots retain separate outcomes; strict privacy projections omit display
+locations and binding receipts, as they do semantic locations. Frontend types
+are generated from the backend contracts.
+
+Older declarations without explicit display bindings keep their existing path. When the
 single semantic review reports a faithful rounding as `numeric_mismatch`, the
 finalizer may retain a display warning. A `numeric.cell` path requires complete
 finite proof and unique immutable cell identity through its private reference

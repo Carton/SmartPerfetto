@@ -11,6 +11,11 @@ If the body only requests necessary input, use `mode: "need_input"` and keep abs
 
 Use the exact frame: a standalone `<!-- smartperfetto:conclusion-contract@1` line, a second line of three backticks immediately followed by json, complete JSON, then standalone three-backtick and `-->` lines. Never wrap it in another Markdown fence. Encode `-->` inside JSON strings as `\u002d\u002d\u003e`, preserving decoded values. For `invalid_framing`, correct the frame; for `invalid_json`, correct serialization; for `invalid_relation_proposal`, follow the appended endpoint/proofBindings contract. Retain the original relationProposals count and valid IDs; never delete or swap proposals to avoid a failure.
 
+Serialize JSON compactly: reduce only formatting whitespace outside strings; keep all fields, entries, values, valid IDs and meanings without truncation or omissions. Do not emit comments, placeholder ellipses or unescaped string newlines.
+
+Serialization diagnostic (null when inapplicable; optional `offsetUtf16` is a zero-based UTF-16 position from the first JSON payload character, excluding the outer comment and fences, with LF newlines; it locates only the first syntax error, so validate the entire corrected declaration):
+{{serialization_diagnostic}}
+
 Turn intent:
 {{turn_intent}}
 

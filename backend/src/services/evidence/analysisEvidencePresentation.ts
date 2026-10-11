@@ -75,7 +75,11 @@ function schemas(strict: boolean) {
       timeRangeNs: object({start: z.string(), end: z.string()}).optional(),
     }),
     numeric: object({operator: z.enum(['eq', 'ne', 'lt', 'lte', 'gt', 'gte']),
-      value: z.union([z.number().finite(), z.string()]), unit: z.string()}).optional(),
+      value: z.union([z.number().finite(), z.string()]), unit: z.string(),
+      presentation: object({schemaVersion: z.literal('numeric_presentation@1'), unit: z.string(),
+        decimalPlaces: z.number().int().min(0).max(18), rounding: z.literal('half_away_from_zero'),
+        quotes: z.array(object({text: z.string(), occurrence: z.number().int().nonnegative().optional()})).min(1).max(16),
+      }).optional()}).optional(),
     source: object({sourceReferenceId: z.string(), filePath: z.string(),
       lineRange: object({start: z.number().int().positive(), end: z.number().int().positive()})}).optional(),
   });
@@ -193,6 +197,13 @@ function schemas(strict: boolean) {
     semanticReview: object({consistency: z.enum(['consistent', 'inconsistent', 'unknown']),
       contentLocations: z.array(object({start: z.number().int().nonnegative(), end: z.number().int().nonnegative(),
         textHash: z.string()}))}).optional(),
+    numericPresentation: object({schemaVersion: z.literal('numeric_presentation_assessment@1'),
+      status: z.enum(['matched', 'mismatch', 'not_checked']), reason: z.string(),
+      binding: object({candidate: object({runId: z.string(), attemptId: z.string(), candidateRef: z.string(),
+        conclusionFingerprint: z.string()}), claimFingerprint: z.string()}),
+      source: object({anchorId: z.string(), captureId: z.string(), rowIndex: z.number().int().nonnegative(), column: z.string()}).optional(),
+      locations: z.array(object({start: z.number().int().nonnegative(), end: z.number().int().nonnegative()})),
+    }).optional(),
   });
   // Keyed by the result type: a field missing here would be stripped on write and rejected on read.
   const claimVerification = object({

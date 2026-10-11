@@ -337,7 +337,21 @@ witness、受信单位/字段语义或覆盖时保留候选/未知状态；
 和结构化 runtime appendix，不能机械删改自然语言结论。
 
 数值引用比较与正文显示精度保持分离。原始引用和 `numeric.cell` 命题仍做精确比较；
-若一次语义审核把忠实舍入判成 `numeric_mismatch`，finalizer 可将该项记为显示精度警告，
+`numeric.presentation` 的显式显示声明（`numeric_presentation@1`）绑定正文中的数字、
+重复出现序号、单位和小数位。`numericPresentationAssessment.ts` 在语义审核前，依据
+完整有限证明、原始捕获单元格与生产者单位，以精确有理数计算固定小数位舍入。
+正文支持 `纳秒/微秒/毫秒/秒` 与相应标准时间单位的明确写法；这些显示别名不授予生产者单位权威。
+结果 `matched/mismatch/not_checked` 独立记录于 claim 的 `numericPresentation`，绑定
+canonical candidate、原声明指纹和捕获位置；不修改正文或机器命题。标识符不做显示舍入，
+计数保持整数，非零显示成零保持未核实。不支持或缺失的显示协议不能补出证明。
+`final_semantics@3` 接收这些结果，仍检查主体、范围、聚合、否定、比较和因果；
+模型同意不能覆盖确定的显示错误。只有审核问题精确位于已匹配数字内时，数值争议才
+记为 `numeric_presentation_review_disagreement` 并保持 partial；其他语义错误不降级。
+绑定数字必须在语义审核覆盖的 claim 位置内，才可能联合获得 verified。
+声明恢复保留整个 semantics，报告、CLI、owner snapshot 保留独立结果；严格隐私投影
+和语义位置一样隐藏显示位置与绑定回执。生成的前端类型来自后端合约。
+
+没有显式显示绑定的旧声明保持兼容：若语义审核把忠实舍入判成 `numeric_mismatch`，finalizer 可记为显示精度警告，
 但数值路径必须已有完整有限证明，并通过私有绑定键、原行号、列和证明 anchor 唯一定位
 不可变捕获值及生产者单位。正文和 issue 位置内只能有一个同值显示候选，且必须真的
 丢弃精度；精确重复、其他语义错误、错误值及把分项当总计不适用。结果保持 partial，

@@ -45,3 +45,37 @@ export function countedUnitDimension(unit: string | undefined): string | undefin
 export function declaredUnitAcceptsProducerDimension(declaredUnit: string, producerDimension: string): boolean {
   return countedUnitDimension(declaredUnit) === 'count' && COUNTED_PRODUCER_DIMENSIONS.has(producerDimension);
 }
+
+/** Exact scales shared by proposition proof and explicit numeric presentation. */
+export type ClaimUnit = {readonly dimension: string; readonly numerator: bigint; readonly denominator: bigint};
+
+// These are explicit unit definitions, not aliases inferred from a column name.
+const units: Readonly<Record<string, ClaimUnit>> = {
+  ns: {dimension: 'time', numerator: 1n, denominator: 1n},
+  us: {dimension: 'time', numerator: 1000n, denominator: 1n},
+  'µs': {dimension: 'time', numerator: 1000n, denominator: 1n},
+  'μs': {dimension: 'time', numerator: 1000n, denominator: 1n},
+  ms: {dimension: 'time', numerator: 1000000n, denominator: 1n},
+  s: {dimension: 'time', numerator: 1000000000n, denominator: 1n},
+  count: {dimension: 'count', numerator: 1n, denominator: 1n},
+  frame: {dimension: 'frames', numerator: 1n, denominator: 1n},
+  frames: {dimension: 'frames', numerator: 1n, denominator: 1n},
+  event: {dimension: 'events', numerator: 1n, denominator: 1n},
+  events: {dimension: 'events', numerator: 1n, denominator: 1n},
+  ratio: {dimension: 'ratio', numerator: 1n, denominator: 1n},
+  '%': {dimension: 'ratio', numerator: 1n, denominator: 100n},
+  percent: {dimension: 'ratio', numerator: 1n, denominator: 100n},
+  B: {dimension: 'bytes', numerator: 1n, denominator: 1n},
+  bytes: {dimension: 'bytes', numerator: 1n, denominator: 1n},
+  KiB: {dimension: 'bytes', numerator: 1024n, denominator: 1n},
+  MiB: {dimension: 'bytes', numerator: 1048576n, denominator: 1n},
+  GiB: {dimension: 'bytes', numerator: 1073741824n, denominator: 1n},
+  Hz: {dimension: 'frequency', numerator: 1n, denominator: 1n},
+  kHz: {dimension: 'frequency', numerator: 1000n, denominator: 1n},
+  MHz: {dimension: 'frequency', numerator: 1000000n, denominator: 1n},
+  GHz: {dimension: 'frequency', numerator: 1000000000n, denominator: 1n},
+};
+
+export function claimUnitFor(unit: string | undefined): ClaimUnit | undefined {
+  return unit !== undefined && Object.prototype.hasOwnProperty.call(units, unit) ? units[unit] : undefined;
+}

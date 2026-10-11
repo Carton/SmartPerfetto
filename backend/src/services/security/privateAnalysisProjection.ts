@@ -478,6 +478,26 @@ export function projectPrivateClaimVerification(
           typeof location.textHash === 'string' && /^[0-9a-f]{16}$/.test(location.textHash))
           .map(({start, end, textHash}) => ({start, end, textHash})),
       }} : {}),
+      // These locations and fingerprints describe the owner's canonical body.
+      // Strict projections omit the receipt just as they omit semantic spans.
+      ...(claim.numericPresentation?.schemaVersion === 'numeric_presentation_assessment@1' && isOwnerCodeAwareProjection() ? {numericPresentation: {
+        schemaVersion: 'numeric_presentation_assessment@1' as const,
+        status: privateControl(claim.numericPresentation.status, ['matched', 'mismatch', 'not_checked'], 'not_checked'),
+        reason: text(claim.numericPresentation.reason),
+        binding: {candidate: {
+          runId: text(claim.numericPresentation.binding.candidate.runId),
+          attemptId: text(claim.numericPresentation.binding.candidate.attemptId),
+          candidateRef: text(claim.numericPresentation.binding.candidate.candidateRef),
+          conclusionFingerprint: text(claim.numericPresentation.binding.candidate.conclusionFingerprint),
+        }, claimFingerprint: text(claim.numericPresentation.binding.claimFingerprint)},
+        ...(claim.numericPresentation.source ? {source: {
+          anchorId: text(claim.numericPresentation.source.anchorId), captureId: text(claim.numericPresentation.source.captureId),
+          rowIndex: claim.numericPresentation.source.rowIndex, column: text(claim.numericPresentation.source.column),
+        }} : {}),
+        locations: claim.numericPresentation.locations.filter(location => Number.isSafeInteger(location.start) &&
+          Number.isSafeInteger(location.end) && location.start >= 0 && location.end > location.start)
+          .map(({start, end}) => ({start, end})),
+      }} : {}),
       ...(claim.referenceResults ? {referenceResults: references(claim.referenceResults)} : {}),
       ...(claim.referenceCells ? {referenceCells: references(claim.referenceCells)} : {}),
       ...(claim.deterministicProof ? {deterministicProof: {
