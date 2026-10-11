@@ -354,7 +354,7 @@ describe('deterministic code-aware semantic delta', () => {
 });
 
 describe('real-provider semantic delta wrapper contract', () => {
-  const wrapper = require('../../../scripts/run-deepseek-agent-e2e.cjs') as {
+  const wrapper = require('../../../scripts/run-glm-agent-e2e.cjs') as {
     parseArgs?: (argv: string[]) => Record<string, unknown>;
     semanticDeltaQueries?: () => Array<Record<string, unknown>>;
     semanticConditionArgs?: (
@@ -486,7 +486,7 @@ describe('real-provider semantic delta wrapper contract', () => {
 
   it('writes unavailable preflight evidence without starting a provider or claiming full acceptance', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smartperfetto-preflight-unavailable-'));
-    const environment = jest.replaceProperty(process, 'env', {...process.env, DEEPSEEK_API_KEY: '', OPENAI_API_KEY: ''});
+    const environment = jest.replaceProperty(process, 'env', {...process.env, GLM_API_KEY: '', OPENAI_API_KEY: ''});
     const output = jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
       const options = wrapper.parseArgs!(['--suite', 'code-aware-semantic-delta', '--runtime', 'openai', '--preflight',
@@ -769,13 +769,13 @@ describe('real-provider semantic delta wrapper contract', () => {
     expect(wrapper.realProviderAvailability?.('qoder-agent-sdk', {})).toEqual({
       available: false,
       reason:
-        'DEEPSEEK_API_KEY_OR_OPENAI_API_KEY_MISSING;QODER_PERSONAL_ACCESS_TOKEN_OR_QODERCLI_PATH_MISSING',
+        'GLM_CODING_PLAN_API_KEY_MISSING;QODER_PERSONAL_ACCESS_TOKEN_OR_QODERCLI_PATH_MISSING',
     });
   });
 });
 
 describe('real-provider task fact configuration', () => {
-  const wrapper = require('../../../scripts/run-deepseek-agent-e2e.cjs');
+  const wrapper = require('../../../scripts/run-glm-agent-e2e.cjs');
 
   it('allows scrolling to choose its tools while declaring independently queried frame facts', () => {
     const args: string[] = wrapper.suites.scrolling.args;

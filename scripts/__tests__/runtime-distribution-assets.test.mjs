@@ -806,13 +806,13 @@ test('Windows cross-platform contracts build and inject the fixed Go gate helper
   assert.doesNotMatch(crossPlatform, /upload-artifact/);
 });
 
-test('local Deepseek E2E owns the source and RAG context matrix', () => {
+test('local GLM Coding Plan E2E owns the source and RAG context matrix', () => {
   assert.equal(
     existsSync(join(root, '.github/workflows/agent-deepseek-e2e.yml')),
     false,
   );
   const runner = readFileSync(
-    join(root, 'backend/scripts/run-deepseek-agent-e2e.cjs'),
+    join(root, 'backend/scripts/run-glm-agent-e2e.cjs'),
     'utf8',
   );
   assert.match(
@@ -825,13 +825,13 @@ test('local Deepseek E2E owns the source and RAG context matrix', () => {
     readFileSync(join(root, 'backend/package.json'), 'utf8'),
   );
   for (const scriptName of [
-    'verify:e2e:deepseek',
-    'verify:e2e:deepseek-startup',
-    'verify:e2e:deepseek-scrolling',
-    'verify:e2e:deepseek-external-issue',
-    'verify:e2e:deepseek-dual-trace',
-    'verify:e2e:deepseek-context',
+    'verify:e2e:glm',
+    'verify:e2e:glm-startup',
+    'verify:e2e:glm-scrolling',
+    'verify:e2e:glm-external-issue',
+    'verify:e2e:glm-dual-trace',
+    'verify:e2e:glm-context',
   ]) {
-    assert.match(backendPackage.scripts[scriptName], /--runtime all-deepseek/);
+    assert.match(backendPackage.scripts[scriptName], /--runtime all-glm/);
   }
 });

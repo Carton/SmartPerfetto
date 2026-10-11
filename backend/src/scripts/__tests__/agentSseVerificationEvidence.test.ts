@@ -522,7 +522,7 @@ describe('owned SSE verifier lifecycle', () => {
     expect(assessment.checks.taskCompleted).toBe(false);
     expect(assessment.checks.originalClaimsVerified).toBe(false);
     expect(taskAcceptanceStatus(Object.values(assessment.checks).every(Boolean), assessment.uncoveredFacets).completeAcceptance).toBe(false);
-    const wrapper = require('../../../scripts/run-deepseek-agent-e2e.cjs');
+    const wrapper = require('../../../scripts/run-glm-agent-e2e.cjs');
     const evaluated = wrapper.evaluateSemanticConditionReport({condition: 'A2',
       query: wrapper.semanticDeltaQueries()[0], sourceRoot,
       report: {passed: false, analysisContext: {codebaseIds: ['cb-source']}, taskVerification: assessment, summary}});
@@ -602,9 +602,9 @@ describe('system investigation terminal acceptance', () => {
   it('preserves isolated runtime session logs and lifecycle codes without credentials', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'verification-logs-'));
     const previous = process.env.SMARTPERFETTO_BACKEND_LOG_DIR;
-    const oldKey = process.env.DEEPSEEK_API_KEY;
+    const oldKey = process.env.GLM_API_KEY;
     process.env.SMARTPERFETTO_BACKEND_LOG_DIR = path.join(directory, 'runtime-logs');
-    process.env.DEEPSEEK_API_KEY = 'provider-key-must-not-appear';
+    process.env.GLM_API_KEY = 'provider-key-must-not-appear';
     try {
       fs.mkdirSync(path.join(process.env.SMARTPERFETTO_BACKEND_LOG_DIR, 'sessions'), {recursive: true});
       const source = path.join(process.env.SMARTPERFETTO_BACKEND_LOG_DIR, 'sessions/session_owned_2026.jsonl');
@@ -623,7 +623,7 @@ describe('system investigation terminal acceptance', () => {
       expect(failure).toMatchObject({errorCode: 'analysis_history_parent_not_authorized', lifecycleErrorCode: 'analysis_history_parent_not_authorized'});
     } finally {
       if (previous === undefined) delete process.env.SMARTPERFETTO_BACKEND_LOG_DIR; else process.env.SMARTPERFETTO_BACKEND_LOG_DIR = previous;
-      if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = oldKey;
+      if (oldKey === undefined) delete process.env.GLM_API_KEY; else process.env.GLM_API_KEY = oldKey;
       fs.rmSync(directory, {recursive: true, force: true});
     }
   });
@@ -662,7 +662,7 @@ describe('system investigation terminal acceptance', () => {
     expect(check('reference-trace')).toBe(false);
   });
   it('loads every declarative real/constructed suite through the same closed expectation parser', () => {
-    const wrapper = require('../../../scripts/run-deepseek-agent-e2e.cjs');
+    const wrapper = require('../../../scripts/run-glm-agent-e2e.cjs');
     for (const scenario of wrapper.systemAnalysisScenarios()) {
       const value = scenario.args[scenario.args.indexOf('--expectation-json') + 1];
       expect(parseAgentSseExpectation(JSON.parse(fs.readFileSync(value.slice(1), 'utf8'))).investigation?.requirements.length)
@@ -1348,7 +1348,7 @@ describe('task fact oracle (deterministic composition, not a model semantic benc
 });
 
 describe('grouped acceptance: wrong answer, unproved answer and undelivered answer stay apart', () => {
-  // The DeepSeek scrolling shape: the value is right and bound to its cell, the finite proof is still a candidate.
+  // The GLM Coding Plan scrolling shape: the value is right and bound to its cell, the finite proof is still a candidate.
   function unprovedTerminal() {
     const terminal = terminalFixture();
     const result = terminal.claimVerificationResult!;
@@ -1582,7 +1582,7 @@ describe('grouped acceptance: wrong answer, unproved answer and undelivered answ
   });
 
   it('leaves the quick frame expectation and every earlier flat check key in place', () => {
-    const wrapper = require('../../../scripts/run-deepseek-agent-e2e.cjs');
+    const wrapper = require('../../../scripts/run-glm-agent-e2e.cjs');
     const quick = wrapper.frameFactExpectation({taskKind: 'investigation', withJank: true});
     expect(quick.intent).toEqual({sceneId: 'scrolling', taskKind: 'investigation', scope: 'bounded_question', deliverable: 'answer'});
     expect(quick.facts.map((fact: any) => [fact.id, fact.columns, fact.verification, fact.unit]))

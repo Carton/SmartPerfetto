@@ -136,7 +136,7 @@ describe('scene SSE verification gate', () => {
     await expect(collectSceneOracleRows(spec, async () => ({columns: ['ts', 'end_ts', 'upid'], rows: [[Number.MAX_SAFE_INTEGER + 1, 2, 7]]}))).rejects.toThrow('NONEXACT');
   });
   it('exposes explicit scene wrapper suites without changing the ordinary default', () => {
-    const wrapper = require('../../../scripts/run-deepseek-agent-e2e.cjs');
+    const wrapper = require('../../../scripts/run-glm-agent-e2e.cjs');
     expect(wrapper.parseArgs(['--suite', 'scene-reconstruction']).suite).toBe('scene-reconstruction');
     expect(wrapper.suites['scene-reconstruction'].args).toEqual(expect.arrayContaining(['--entry', 'scene-reconstruction']));
     expect(wrapper.suites['scene-cancel'].args).toEqual(expect.arrayContaining(['--scene-scenario', 'cancel']));

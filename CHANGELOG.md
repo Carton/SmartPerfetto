@@ -20,6 +20,7 @@ Detailed commit-level history is available via `git log`.
 - Scene entry evidence is collected through the shared Skill path before the first model turn, retaining pinned identity and strategy scope.
 - Explicit numeric presentation declarations bind body literals, units, repeated occurrences and fixed-decimal rounding to original captured values using exact arithmetic.
 - Flagship acceptance checks independently distinguish value correctness, complete producer-bound proof and finished delivery.
+- A read-existing draft diagnostic tool reports declaration problems before submission without executing SQL or certifying final acceptance.
 
 ### Fixed
 
@@ -28,10 +29,13 @@ Detailed commit-level history is available via `git log`.
 - Supported native SQL quantity expressions derive units from pinned formal schemas and sealed executions without acquiring native row identities or clocks.
 - Startup acceptance compares the platform's original classification separately from Skill reclassification; semantic investigation review receives the fixed applicability constraints enforced by its parser.
 - Count equivalence, wait-chain evidence citations and delivery budgeting preserve their evidence, identity and privacy boundaries.
+- Investigation records retain distinct issued artifact identities, and snapshot-bound short references preserve the original ledger provenance.
+- Runtime tool transport preserves schema-declared JSON strings and emits complete unit and evidence guidance within existing description budgets.
 
 ### Changed
 
 - Regenerated the frontend contract and committed production prebuild; refreshed architecture guidance and test ownership.
+- Real-provider verification defaults to the GLM Coding Plan endpoint with pinned main and light models; retired DeepSeek commands stop before making provider calls.
 
 ## [1.15.1] - 2026-10-06
 

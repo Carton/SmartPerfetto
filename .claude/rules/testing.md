@@ -527,59 +527,65 @@ npx tsx src/scripts/verifyAgentSseScrolling.ts \
   --keep-session
 ```
 
-Deepseek-backed OpenAI runtime startup final-report gate:
+GLM Coding Plan native runtime startup final-report gate:
 
 ```bash
 cd backend
-OPENAI_API_KEY=... npm run verify:e2e:deepseek-startup
+GLM_API_KEY=... npm run verify:e2e:glm-startup
 ```
 
-Qoder DeepSeek BYOK startup gate (requires both the DeepSeek provider key and
+Qoder GLM Coding Plan BYOK startup gate (requires both the GLM Coding Plan provider key and
 Qoder PAT or local `qodercli` login; BYOK does not replace Qoder auth):
 
 ```bash
 cd backend
 npm run qoder:install -- --accept-terms
-DEEPSEEK_API_KEY=... QODER_PERSONAL_ACCESS_TOKEN=... \
-  npm run verify:e2e:qoder-deepseek-startup
+GLM_API_KEY=... QODER_PERSONAL_ACCESS_TOKEN=... \
+  npm run verify:e2e:qoder-glm-startup
 ```
 
 When Qoder auth is unavailable, record this real-provider gate as unavailable;
 do not treat unit/type/build/PR checks as an authenticated Qoder E2E result.
 
-Agent SSE E2E runs that exercise the OpenAI runtime should use Deepseek by
-default, not GLM. The canonical wrapper is
-`backend/scripts/run-deepseek-agent-e2e.cjs`; it loads `backend/.env`, prefers
-`DEEPSEEK_API_KEY` over `OPENAI_API_KEY`, passes `--provider-id env` so the
-verification request ignores active Provider Manager profiles, and pins:
+Agent SSE release validation uses the subscribed GLM Coding Plan. The canonical
+wrapper is `backend/scripts/run-glm-agent-e2e.cjs`; it loads `backend/.env`, uses
+`GLM_API_KEY` (compatible aliases: `GLM_CODING_API_KEY`, `ZAI_CODING_CN_API_KEY`),
+and passes `--provider-id env` to ignore active Provider Manager profiles.
+It never falls back to DeepSeek or a generic `OPENAI_API_KEY`.
 
-- `SMARTPERFETTO_AGENT_RUNTIME=openai-agents-sdk`
-- `OPENAI_BASE_URL=https://api.deepseek.com/v1`
-- `OPENAI_AGENTS_PROTOCOL=chat_completions`
-- `OPENAI_MODEL=deepseek-v4-pro`
-- `OPENAI_LIGHT_MODEL=deepseek-flash`
-- No implicit OpenAI main-answer output cap; an explicit
-  `OPENAI_MAX_OUTPUT_TOKENS` must be a positive safe integer. Prompt guidance
-  controls normal answer length; provider limits remain authoritative.
+- `GLM_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4`; the generic paid
+  `/api/paas/v4` and other endpoint origins are refused.
+- `GLM_MODEL=glm-5.3` and `GLM_LIGHT_MODEL=glm-5.3-flash`.
+- CLI selections: `--provider zai-coding-cn --base-url <coding-plan URL>
+  --model <GLM model> --light-model <GLM light model>`.
+- OpenAI receives explicit `OPENAI_*` model/endpoint pins and
+  `OPENAI_AGENTS_PROTOCOL=chat_completions`. Pi uses the installed
+  `zai-coding-cn` catalog's native capabilities; OpenCode receives pinned GLM
+  model JSON. Conflicting model JSON overrides are refused.
+- Provider-default main reasoning and native output limits remain unchanged.
+  There is no implicit main-answer output cap; an explicit
+  `OPENAI_MAX_OUTPUT_TOKENS` must be a positive safe integer.
+- `all`/`all-glm` selects OpenAI, Pi and OpenCode for normal suites. Runs are
+  sequential; when coordinating separate runs, use at most two runtimes at
+  once to avoid subscription throttling.
 
-Keep API keys out of committed files. Pass `DEEPSEEK_API_KEY` or
-`OPENAI_API_KEY` through the shell environment or a local untracked env file
-only. `npm run verify:e2e:openai-startup` is a compatibility alias for the
-Deepseek startup gate.
+Keep keys in shell variables or ignored local env files. The old DeepSeek CLI
+and npm names stop with a migration message; they never silently run GLM.
+`npm run verify:e2e:openai-startup` selects the OpenAI adapter with GLM.
 
 Scrolling:
 
 ```bash
 cd backend
-OPENAI_API_KEY=... npm run verify:e2e:deepseek-scrolling
+GLM_API_KEY=... npm run verify:e2e:glm-scrolling
 ```
 
 Flagship startup + scrolling gate:
 
 ```bash
 cd backend
-OPENAI_API_KEY=... npm run verify:e2e:deepseek-flagship          # diagnostic, writes summaries
-OPENAI_API_KEY=... npm run verify:e2e:deepseek-flagship:strict   # complete acceptance
+GLM_API_KEY=... npm run verify:e2e:glm-flagship          # diagnostic, writes summaries
+GLM_API_KEY=... npm run verify:e2e:glm-flagship:strict   # complete acceptance
 ```
 
 Their expectations live in `backend/tests/e2e/flagship/*.expectation.json`
@@ -636,7 +642,7 @@ M10 Agent-assisted external issue triage:
 
 ```bash
 cd backend
-OPENAI_API_KEY=... npm run verify:e2e:deepseek-external-issue
+GLM_API_KEY=... npm run verify:e2e:glm-external-issue
 ```
 
 This suite requires a persisted source-run provider snapshot, an actionable
@@ -654,13 +660,12 @@ Complete real-provider matrix:
 
 ```bash
 cd backend
-OPENAI_API_KEY=... npm run verify:e2e:deepseek
+GLM_API_KEY=... npm run verify:e2e:glm
 ```
 
-For CI-backed real-provider validation, use the manual GitHub Actions workflow
-`Agent Deepseek E2E`. It requires the repository secret `DEEPSEEK_API_KEY` and
-accepts `suite=all|startup|scrolling|external-issue|context`; keep it manual
-because it consumes provider quota and secrets.
+There is no automated real-provider Agent E2E workflow. Run the subscribed GLM
+Coding Plan gate locally with ignored credentials; local results and GitHub
+checks are separate evidence.
 
 `npm --prefix backend run verify:e2e:stop-semantics -- --base-url http://127.0.0.1:<port>`
 checks drafts, the provisional answer, review-only/full/forced stops and the
@@ -745,13 +750,14 @@ all three without repeating their suites.
 With credentials safely available, run the separate repeated provider matrix:
 
 ```bash
-node backend/scripts/run-deepseek-agent-e2e.cjs \
+node backend/scripts/run-glm-agent-e2e.cjs \
   --suite code-aware-semantic-delta \
-  --runtime all \
+  --runtime all-glm \
   --repeat 5
 ```
 
-Report Claude, OpenAI, Pi, OpenCode, and Qoder independently. Missing auth must
+Report the subscribed GLM OpenAI, Pi and OpenCode results independently.
+Claude and Qoder require explicit separate runs and authentication. Missing auth must
 remain `REAL PROVIDER NOT AVAILABLE`; never replace it with a unit, fixture, or
 deterministic five-runtime execution result.
 

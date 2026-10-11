@@ -19,7 +19,7 @@ import {ENTERPRISE_FEATURE_FLAG_ENV} from '../../config';
 
 jest.setTimeout(120_000);
 const scope = {tenantId: DEFAULT_TENANT_ID, workspaceId: DEFAULT_WORKSPACE_ID, userId: DEFAULT_DEV_USER_ID};
-const wrapper = require(path.resolve(__dirname, '../../../scripts/run-deepseek-agent-e2e.cjs'));
+const wrapper = require(path.resolve(__dirname, '../../../scripts/run-glm-agent-e2e.cjs'));
 
 function expectation() {
   const query = wrapper.semanticDeltaQueries().find((item: {kind: string}) => item.kind === 'quantitative-only');

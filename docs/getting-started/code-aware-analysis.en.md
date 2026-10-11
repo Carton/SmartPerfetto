@@ -248,22 +248,25 @@ That local gate makes no provider call and is not model-quality acceptance.
 With credentials configured, run the separate real-provider matrix:
 
 ```bash
-node backend/scripts/run-deepseek-agent-e2e.cjs \
+node backend/scripts/run-glm-agent-e2e.cjs \
   --suite code-aware-semantic-delta \
-  --runtime all \
+  --runtime all-glm \
   --repeat 5
 ```
 
-Claude, OpenAI, Pi, OpenCode, and Qoder results are reported independently as
+The default matrix uses the subscribed GLM Coding Plan endpoint and `GLM_API_KEY`,
+with `glm-5.3` for main answers and `glm-5.3-flash` for light calls. Generic paid
+endpoints and DeepSeek fallback are refused. OpenAI, Pi and OpenCode results
+are reported independently as
 `PASSED`, `FAILED`, or `REAL PROVIDER NOT AVAILABLE`; missing credentials are
-not a pass.
+not a pass. Claude and Qoder require explicit separate runs and authentication.
 
 Use a single-scenario diagnostic to investigate a failure before repeating the
 matrix. It does not replace five repetitions or certify uncovered recommendation
 semantics:
 
 ```bash
-node backend/scripts/run-deepseek-agent-e2e.cjs \
+node backend/scripts/run-glm-agent-e2e.cjs \
   --suite code-aware-semantic-delta --runtime openai-agents-sdk \
   --preflight --query-id explicit-source-location --condition A2
 ```
