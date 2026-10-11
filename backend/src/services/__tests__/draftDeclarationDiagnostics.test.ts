@@ -6,6 +6,7 @@ import {ArtifactStore} from '../../agentv3/artifactStore';
 import {captureEvidenceTable} from '../evidence/evidenceCapture';
 import {buildTraceProcessorQueryProvenance} from '../traceProcessorConnectionModel';
 import {diagnoseConclusionDraft, draftDiagnosticOwnerKey, DRAFT_DECLARATION_MAX_BYTES} from '../draftDeclarationDiagnostics';
+import {MAX_CLAIM_DIAGNOSTICS} from '../../agent/core/conclusionContract';
 
 function fixture(options: {unit?: boolean; unitToken?: string; trace?: string; budget?: number; viewRun?: string; viewSession?: string} = {}) {
   const store = new ArtifactStore();
@@ -60,6 +61,45 @@ describe('draft declaration diagnostics', () => {
   it('retains unknown producer units', async () => {
     expect(await diagnoseConclusionDraft(fixture({unit: false}).input)).toMatchObject({
       diagnostics: [{finiteReason: 'unit_authority_unknown', producerUnits: []}]});
+  });
+  it('identifies the missing clusters root field without echoing declaration values or reading private cells', async () => {
+    const f = fixture();
+    delete f.contract.clusters;
+    f.contract.claims[0].text = 'MODEL_PRIVATE_CANARY';
+    const read = jest.fn(f.input.readView.resolveReferences);
+    const result = await diagnoseConclusionDraft({...f.input, readView: {...f.input.readView, resolveReferences: read},
+      declarationJson: JSON.stringify(f.contract)});
+    expect(result).toEqual({diagnosticOnly: true, coverageNotChecked: true, finalCertification: false,
+      state: 'invalid_input', reason: 'invalid_declaration', schemaDiagnostics: [{code: 'invalid_contract', path: '$',
+        details: [{field: '$.clusters', reason: 'missing_required', expected: 'array', actual: 'missing'}]}]});
+    expect(read).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toMatch(/MODEL_PRIVATE_CANARY|never return retained private cell|7\.123456/);
+  });
+  it('locates a single claim numeric value failure using the closed parser diagnostic', async () => {
+    const f = fixture(); f.contract.claims[0].semantics.numeric.value = 'MODEL_PRIVATE_NUMERIC_CANARY';
+    const result = await diagnoseConclusionDraft({...f.input, declarationJson: JSON.stringify(f.contract)});
+    expect(result).toMatchObject({state: 'diagnosed', schemaDiagnostics: [{code: 'invalid_semantics', path: 'claims[0].semantics',
+      claimDiagnostic: {ordinal: 1, code: 'invalid_semantics', field: 'semantics.numeric', subreason: 'value'}}],
+      diagnostics: [{finiteReason: 'invalid_claim', producerUnits: []}], coverageNotChecked: true, finalCertification: false});
+    expect(JSON.stringify(result)).not.toMatch(/MODEL_PRIVATE_NUMERIC_CANARY|never return retained private cell|7\.123456/);
+  });
+  it.each([
+    ['MODEL_PRIVATE_RELATION_CANARY', 'relationProposals', {scope: 'collection', reason: 'collection_not_array'}],
+    [[{MODEL_PRIVATE_RELATION_CANARY: true}], 'relationProposals[0]', {scope: 'item', ordinal: 1, reason: 'unknown_field'}],
+  ])('preserves closed relation shape diagnostics without echoing proposal fields: %j', async (proposals, path, diagnostic) => {
+    const f = fixture(); f.contract.relationProposals = proposals;
+    const result = await diagnoseConclusionDraft({...f.input, declarationJson: JSON.stringify(f.contract)});
+    expect(result).toMatchObject({schemaDiagnostics: [{code: 'invalid_relation_proposal', path, relationProposalDiagnostic: diagnostic}],
+      coverageNotChecked: true, finalCertification: false});
+    expect(JSON.stringify(result)).not.toMatch(/MODEL_PRIVATE_RELATION_CANARY|never return retained private cell|7\.123456/);
+  });
+  it('keeps schema feedback bounded when multiple claims fail the same numeric schema', async () => {
+    const f = fixture(); const claim = f.contract.claims[0];
+    f.contract.claims = Array.from({length: MAX_CLAIM_DIAGNOSTICS + 1}, (_, index) => ({...claim, id: `claim-${index}`,
+      semantics: {...claim.semantics, numeric: {...claim.semantics.numeric, value: 'MODEL_PRIVATE_NUMERIC_CANARY'}}}));
+    const result = await diagnoseConclusionDraft({...f.input, declarationJson: JSON.stringify(f.contract)});
+    expect('schemaDiagnostics' in result ? result.schemaDiagnostics : undefined).toHaveLength(MAX_CLAIM_DIAGNOSTICS);
+    expect(JSON.stringify(result)).not.toContain('MODEL_PRIVATE_NUMERIC_CANARY');
   });
   it('does not project arbitrary stored unit strings or promote an invalid schema item', async () => {
     const hiddenUnit = 'private-unit-value';

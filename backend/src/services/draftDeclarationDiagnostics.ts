@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2024-2026 Gracker (Chris)
 
-import {MAX_CLAIM_DIAGNOSTICS, isConclusionRootParseIssue, parseConclusionContractDeclaration} from '../agent/core/conclusionContract';
+import {MAX_CLAIM_DIAGNOSTICS, MAX_CONCLUSION_STRUCTURE_DETAILS, copyConclusionClaimDiagnostic,
+  isConclusionClaimDiagnostic, isConclusionContractStructureDetail, isConclusionRelationProposalDiagnostic,
+  isConclusionRootParseIssue, parseConclusionContractDeclaration} from '../agent/core/conclusionContract';
 import {analysisDeliveryFingerprint} from '../types/analysisDelivery';
 import {claimUnitFor} from '../utils/claimUnits';
 import {prepareClaimEvidence, evidenceReferenceKey} from './evidence/claimEvidencePreparation';
@@ -43,7 +45,15 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
       (raw as {claims: unknown[]}).claims.length > MAX_EVIDENCE_READ_REFERENCES)
     return {...boundary, state: 'invalid_input' as const, reason: 'claim_budget_exhausted'};
   const parsed = parseConclusionContractDeclaration(raw);
-  const schemaDiagnostics = parsed.issues.slice(0, MAX_CLAIM_DIAGNOSTICS).map(issue => ({code: issue.code, path: issue.path}));
+  const schemaDiagnostics = parsed.issues.slice(0, MAX_CLAIM_DIAGNOSTICS).map(issue => ({
+    code: issue.code, path: issue.path,
+    ...(issue.code === 'invalid_contract' && issue.details ? {details: issue.details
+      .filter(isConclusionContractStructureDetail).slice(0, MAX_CONCLUSION_STRUCTURE_DETAILS).map(detail => ({...detail}))} : {}),
+    ...(isConclusionClaimDiagnostic(issue.claimDiagnostic) && issue.claimDiagnostic.code === issue.code
+      ? {claimDiagnostic: copyConclusionClaimDiagnostic(issue.claimDiagnostic)} : {}),
+    ...(issue.code === 'invalid_relation_proposal' && isConclusionRelationProposalDiagnostic(issue.relationProposalDiagnostic)
+      ? {relationProposalDiagnostic: {...issue.relationProposalDiagnostic}} : {}),
+  }));
   if (!parsed.contract || parsed.issues.some(isConclusionRootParseIssue))
     return {...boundary, state: 'invalid_input' as const, reason: 'invalid_declaration', schemaDiagnostics};
   const contract = parsed.contract;
