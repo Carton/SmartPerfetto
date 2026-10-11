@@ -1265,9 +1265,10 @@ export function declaredContractForResult(contract: ConclusionContract | undefin
     // their re-parse; unique ids still re-attach per-claim validity then.
     const invalidById = new Map<string, ConclusionContractClaimItem>();
     if (parsedClaims.length !== originalClaims.length) {
-      const ids = originalClaims.flatMap(claim => typeof claim.id === 'string' ? [claim.id] : []);
+      const ids = originalClaims.flatMap(claim => typeof claim?.id === 'string' ? [claim.id] : []);
       for (const claim of originalClaims) {
-        if (claim.valid === false && typeof claim.id === 'string' && ids.filter(id => id === claim.id).length === 1) {
+        // Bounded privacy projection can retain array length with omitted slots.
+        if (claim?.valid === false && typeof claim.id === 'string' && ids.filter(id => id === claim.id).length === 1) {
           invalidById.set(claim.id, claim);
         }
       }

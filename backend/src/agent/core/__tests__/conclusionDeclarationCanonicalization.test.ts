@@ -25,7 +25,7 @@ import {
   inspectCandidateProtocol,
   sanitizeCandidateProtocolDiagnostic,
 } from '../../../services/canonicalAnalysisResult';
-import {projectConclusionProtocol} from '../../../services/security/conclusionProtocolProjection';
+import {projectConclusionProtocol, projectConclusionContractForDisplay} from '../../../services/security/conclusionProtocolProjection';
 import {analysisDeliveryFingerprint} from '../../../types/analysisDelivery';
 import {buildNativeDeclarationCompletionPrompt, requestNativeDeclarationCompletion} from '../../../agentRuntime/runtimeConclusionProtocol';
 import type {AnalysisTurnIntent} from '../../../agentRuntime/analysisTurnIntent';
@@ -476,5 +476,38 @@ describe('only the server supplies a new result\'s case recommendations', () => 
     expect(accepted.validationContract?.conclusions).toEqual(source.conclusionContract?.conclusions);
     expect(canonicalizeAnalysisResult(source, {context: {entry: 'historical_restore'}})
       .result.conclusionContract?.caseRecommendations).toEqual(recommendations);
+  });
+});
+
+describe('bounded display declaration projection', () => {
+  it('skips omitted claim slots while retaining unique parser-owned invalidity', () => {
+    const parsed = parseConclusionContractSidecar(sidecar(JSON.stringify(verboseDeclaration([
+      {...REAL.captured, id: 'retained', references: []},
+      {...REAL.captured, id: 'invalid', references: []},
+    ]))));
+    const contract = parsed.contract!;
+    const invalid = contract.claims![1];
+    invalid.valid = false;
+    invalid.invalidCodes = ['invalid_reference'];
+    const sparse = [contract.claims![0], invalid, invalid];
+    delete sparse[1];
+    contract.claims = sparse;
+    const projected = declaredContractForResult(contract)!;
+    expect(projected.claims?.map(claim => claim.id)).toEqual(['retained', 'invalid']);
+    expect(projected.claims?.[1]).toMatchObject({valid: false, invalidCodes: ['invalid_reference']});
+    expect(contract.claims).toBe(sparse);
+    expect(1 in sparse).toBe(false);
+  });
+
+  it('finishes a node-limited display without exposing omitted claims or mutating native input', () => {
+    const claims = Array.from({length: 300}, (_, index) => ({...REAL.captured, id: `claim-${index}`}));
+    const native = parseConclusionContractSidecar(sidecar(JSON.stringify(verboseDeclaration(claims)))).contract!;
+    expect(native.claims).toHaveLength(300);
+    const before = JSON.stringify(native);
+    const display = projectConclusionContractForDisplay(undefined, native)!;
+    expect(display.claims!.length).toBeGreaterThan(0);
+    expect(display.claims!.length).toBeLessThan(300);
+    expect(display.claims?.some(claim => claim.id === 'claim-299')).toBe(false);
+    expect(JSON.stringify(native)).toBe(before);
   });
 });
