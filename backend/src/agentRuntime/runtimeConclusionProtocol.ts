@@ -295,10 +295,16 @@ export function requestNativeDeclarationCompletion(input: {
   if (framingRejected && (!recoveredPayload || typeof recoveredPayload !== 'object' || Array.isArray(recoveredPayload))) {
     return undefined; // Interrupted or ambiguous framing keeps the existing full-answer path.
   }
-  const payload = recoveredPayload as {claims?: unknown; relationProposals?: unknown} | undefined;
+  const payload = recoveredPayload as {claims?: unknown; relationProposals?: unknown; sourceClaimBindings?: unknown} | undefined;
   const rawClaims = payloadClaims(payload);
   if (framingRejected && rawClaims) {
-    diagnostic = Object.freeze({...diagnostic, claimCount: rawClaims.length});
+    // The sanitizer admits declaration counts only as a complete group. A
+    // framing rejection has no parsed shell, so recover all three together;
+    // otherwise the entire repair diagnostic would be replaced with null.
+    diagnostic = Object.freeze({...diagnostic, claimCount: rawClaims.length,
+      semanticClaimCount: rawClaims.filter(item => item && typeof item === 'object' &&
+        Object.prototype.hasOwnProperty.call(item, 'semantics')).length,
+      sourceBindingCount: Array.isArray(payload?.sourceClaimBindings) ? payload.sourceClaimBindings.length : 0});
   }
   // Only ids the parser accepts: a blank id is itself a failure the repair has to fix.
   const declaredClaimIds = Array.isArray(rawClaims) ? [...new Set(rawClaims.flatMap(item => {

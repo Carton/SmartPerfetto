@@ -5,7 +5,7 @@
 import {compactSemanticEvidenceSnapshot, expandSemanticEvidenceSnapshot} from '../evidence/semanticEvidenceSnapshot';
 import {compactSemanticSourceSnapshot, expandSemanticSourceSnapshot} from '../evidence/semanticSourceSnapshot';
 import type {AnalysisResult} from '../../agent/core/orchestratorTypes';
-import {renderConclusionContractSidecar, parseConclusionContractDeclaration, type ConclusionContract,
+import {renderConclusionContractSidecar, wrapConclusionContractSidecarPayload, parseConclusionContractDeclaration, type ConclusionContract,
   type ConclusionContractClaimItem} from '../../agent/core/conclusionContract';
 import {analysisDeliveryFingerprint, type AnalysisCompletion, type AnalysisDeliveryContext} from '../../types/analysisDelivery';
 import {canonicalizeAnalysisResult, isIssuedCanonicalAnalysisProjection, inspectCandidateProtocol,
@@ -253,6 +253,44 @@ describe('canonical analysis result projection', () => {
     });
     const onlySidecar = inspectCandidateProtocol(renderConclusionContractSidecar(declaration()));
     expect(buildCandidateProtocolDiagnostic(onlySidecar, 'native', 1)).toMatchObject({status: 'valid', canonicalChars: 0});
+  });
+
+  it.each([
+    ['marker', 'not_exact', 2, (text: string) => text.replace('contract@1', 'contract@2 PRIVATE_FRAMING_CANARY')],
+    ['opening_fence', 'not_exact', 3, (text: string) => text.replace('```json', '```JSON PRIVATE_FRAMING_CANARY')],
+    ['closing_fence', 'not_exact', 5, (text: string) => text.replace('\n```\n-->', '\n``` \n-->')],
+    ['terminator', 'missing', 2, (text: string) => text.replace('\n-->', '')],
+    ['comment', 'noncanonical', 2, (text: string) => text.replace('contract@1', 'declaration').replace('```json\n', '').replace('\n```', '')],
+    ['payload', 'embedded_terminator', 4, (text: string) => text.replace('Measured duration is', '--> PRIVATE_FRAMING_CANARY Measured duration is')],
+  ])('locates %s without publishing native framing text', (field, reason, line, mutate) => {
+    const raw = `Body PRIVATE_FRAMING_CANARY\n${(mutate as (text: string) => string)(wrapConclusionContractSidecarPayload(JSON.stringify(declaration())))}`;
+    const inspected = inspectCandidateProtocol(raw);
+    const diagnostic = buildCandidateProtocolDiagnostic(inspected, 'native', 1);
+    expect(diagnostic).toMatchObject({status: 'invalid', issueCodes: ['invalid_framing'],
+      framingDiagnostic: {field, reason, line}});
+    expect(sanitizeCandidateProtocolDiagnostic(diagnostic)).toEqual(diagnostic);
+    expect(JSON.stringify(diagnostic)).not.toContain('PRIVATE_FRAMING_CANARY');
+    expect(inspected.sidecar.bindingEligibility).toBe('ineligible');
+    expect(inspectCandidateProtocol(raw)).toEqual(inspected);
+    const old = {...diagnostic};
+    delete old.framingDiagnostic;
+    expect(sanitizeCandidateProtocolDiagnostic(old)).toEqual(old);
+  });
+
+  it('rejects forged framing facts, private fields and impossible positions', () => {
+    const raw = `Body\n${renderConclusionContractSidecar(declaration()).replace('```json', '```JSON')}`;
+    const diagnostic = buildCandidateProtocolDiagnostic(inspectCandidateProtocol(raw), 'native', 1);
+    const detail = diagnostic.framingDiagnostic!;
+    for (const framingDiagnostic of [null, {}, {...detail, field: 'PRIVATE_PATH'}, {...detail, reason: 'missing'},
+      {...detail, line: 0}, {...detail, line: 1.5}, {...detail, line: raw.length + 2},
+      {...detail, source: 'PRIVATE_SOURCE'}, {...detail, text: 'PRIVATE_VALUE'}]) {
+      expect(sanitizeCandidateProtocolDiagnostic({...diagnostic, framingDiagnostic})).toBeUndefined();
+    }
+    expect(sanitizeCandidateProtocolDiagnostic({...diagnostic, status: 'valid'})).toBeUndefined();
+    expect(sanitizeCandidateProtocolDiagnostic({...diagnostic, sidecarStatus: 'absent'})).toBeUndefined();
+    expect(sanitizeCandidateProtocolDiagnostic({...diagnostic, issueCodes: ['invalid_json']})).toBeUndefined();
+    const valid = buildCandidateProtocolDiagnostic(inspectCandidateProtocol(renderConclusionContractSidecar(declaration())), 'native', 1);
+    expect(valid).not.toHaveProperty('framingDiagnostic');
   });
 
   it('distinguishes valid native declarations from a later malformed projected declaration without disclosing text', () => {

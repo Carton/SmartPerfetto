@@ -11,6 +11,7 @@ import {parseConclusionContractSidecar, parseTypedConclusionContractJson,
   MAX_CONCLUSION_STRUCTURE_DETAILS, isConclusionContractStructureDetail,
   MAX_RELATION_PROPOSAL_DIAGNOSTICS, isConclusionRelationProposalDiagnostic, CONCLUSION_PARSE_ISSUE_CODES,
   MAX_CLAIM_DIAGNOSTICS, isConclusionClaimDiagnostic, copyConclusionClaimDiagnostic,
+  CONCLUSION_CONTRACT_SIDECAR_MARKER,
   isConclusionRootParseIssue,
   type ConclusionContractStructureDetail, type ConclusionContractParseIssue,
   type ConclusionRelationProposalDiagnostic, type ConclusionClaimDiagnostic} from '../agent/core/conclusionContract';
@@ -85,6 +86,8 @@ export interface CandidateProtocolDiagnostic {
   relationProposalDiagnostics?: ConclusionRelationProposalDiagnostic[];
   /** Failing claims by 1-based position and closed schema field, so one repair can find them. */
   claimDiagnostics?: ConclusionClaimDiagnostic[];
+  /** First failed framing check: closed grammar facts and a 1-based native line, never its text. */
+  framingDiagnostic?: CandidateFramingDiagnostic;
   issueCount: number;
   rawChars: number;
   /** UTF-16 characters after trimming canonical narrative whitespace. */
@@ -104,11 +107,46 @@ export interface CandidateProtocolDiagnostic {
   unrepairableCount?: number;
 }
 
+const FRAMING_REASONS = {
+  marker: ['not_exact'], opening_fence: ['not_exact'], closing_fence: ['not_exact'],
+  terminator: ['missing'], comment: ['noncanonical'], payload: ['embedded_terminator'],
+} as const;
+
+interface CandidateFramingDiagnostic {
+  field: keyof typeof FRAMING_REASONS;
+  reason: typeof FRAMING_REASONS[keyof typeof FRAMING_REASONS][number];
+  line: number;
+}
+
+function isCandidateFramingDiagnostic(value: unknown): value is CandidateFramingDiagnostic {
+  if (!record(value) || Object.keys(value).length !== 3 ||
+      Object.keys(value).some(key => !['field', 'reason', 'line'].includes(key)) ||
+      typeof value.field !== 'string' || !Object.prototype.hasOwnProperty.call(FRAMING_REASONS, value.field) ||
+      !Number.isSafeInteger(value.line) || (value.line as number) < 1) return false;
+  return (FRAMING_REASONS[value.field as CandidateFramingDiagnostic['field']] as readonly unknown[]).includes(value.reason);
+}
+
+/** Observe only a segment already selected by the strict parser; never recognize or admit a new one. */
+function framingDiagnostic(sidecar: ConclusionContractSidecarParseResult): CandidateFramingDiagnostic | undefined {
+  if (!sidecar.issues.some(issue => issue.code === 'invalid_framing') || sidecar.machineSegments.length !== 1) return undefined;
+  const segment = sidecar.machineSegments[0];
+  const startLine = sidecar.raw.slice(0, segment.start).split(/\r?\n/).length;
+  if (sidecar.rawPayload !== undefined) return {field: 'comment', reason: 'noncanonical', line: startLine};
+  const lines = sidecar.raw.slice(segment.start, segment.end).split(/\r?\n/);
+  if (lines[lines.length - 1] === '') lines.pop(); // A closed segment may include its line ending.
+  if (lines[lines.length - 1] !== '-->') return {field: 'terminator', reason: 'missing', line: startLine};
+  if (lines[0] !== CONCLUSION_CONTRACT_SIDECAR_MARKER) return {field: 'marker', reason: 'not_exact', line: startLine};
+  if (lines[1] !== '```json') return {field: 'opening_fence', reason: 'not_exact', line: startLine + 1};
+  if (lines[lines.length - 2] !== '```') return {field: 'closing_fence', reason: 'not_exact', line: startLine + lines.length - 2};
+  const embedded = lines.slice(2, -2).findIndex(line => line.includes('-->'));
+  return embedded < 0 ? undefined : {field: 'payload', reason: 'embedded_terminator', line: startLine + embedded + 2};
+}
+
 const CANDIDATE_PROTOCOL_DIAGNOSTIC_KEYS = [
   'schemaVersion', 'stage', 'candidateIndex', 'status', 'sidecarStatus', 'typedJsonStatus',
   'issueCodes', 'issueCount', 'rawChars', 'canonicalChars', 'projectionKind',
   'claimCount', 'semanticClaimCount', 'sourceBindingCount', 'invalidClaimCount',
-  'invalidProposalCount', 'unrepairableCount', 'details', 'relationProposalDiagnostics', 'claimDiagnostics',
+  'invalidProposalCount', 'unrepairableCount', 'details', 'relationProposalDiagnostics', 'claimDiagnostics', 'framingDiagnostic',
 ] as const;
 
 const claimDiagnosticKey = (detail: ConclusionClaimDiagnostic) => `${detail.ordinal}:${detail.code}:${detail.field}`;
@@ -139,6 +177,9 @@ export function sanitizeCandidateProtocolDiagnostic(value: unknown): CandidatePr
   if (invalidCounts.some(count => count !== undefined) &&
       (!invalidCounts.every(count => count === undefined || Number.isSafeInteger(count) && count >= 0) ||
         (data.unrepairableCount ?? 0) > (data.invalidClaimCount ?? 0) + (data.invalidProposalCount ?? 0))) return undefined;
+  if (data.framingDiagnostic !== undefined && (!isCandidateFramingDiagnostic(data.framingDiagnostic) ||
+      data.status !== 'invalid' || data.sidecarStatus !== 'invalid' || !data.issueCodes.includes('invalid_framing') ||
+      data.framingDiagnostic.line > data.rawChars + 1)) return undefined;
   const bounded = <T>(value: unknown, max: number, guard: (detail: unknown) => detail is T,
     key: (detail: T) => string, admits: (details: T[]) => boolean): value is T[] | undefined =>
     value === undefined || Array.isArray(value) && value.length > 0 && value.length <= max &&
@@ -156,6 +197,7 @@ export function sanitizeCandidateProtocolDiagnostic(value: unknown): CandidatePr
     details => data.issueCount >= details.length &&
       details.every(detail => data.issueCodes.includes(detail.code)))) return undefined;
   return {...data, issueCodes: [...data.issueCodes],
+    ...(data.framingDiagnostic ? {framingDiagnostic: {...data.framingDiagnostic}} : {}),
     ...(data.details ? {details: data.details.map(detail => ({...detail}))} : {}),
     ...(data.relationProposalDiagnostics ? {relationProposalDiagnostics:
       data.relationProposalDiagnostics.map(detail => ({...detail}))} : {}),
@@ -170,6 +212,7 @@ export function buildCandidateProtocolDiagnostic(
 ): CandidateProtocolDiagnostic {
   const issues = [...inspected.sidecar.issues, ...(inspected.typedJson?.issues ?? [])];
   const parsed = inspected.sidecar.status !== 'absent' ? inspected.sidecar : inspected.typedJson;
+  const framing = framingDiagnostic(inspected.sidecar);
   const payload = parsed?.rawPayload as {claims?: unknown; sourceClaimBindings?: unknown} | undefined;
   const claims = Array.isArray(payload?.claims) ? payload.claims : parsed?.contract?.claims ?? [];
   const sourceBindings = Array.isArray(payload?.sourceClaimBindings) ? payload.sourceClaimBindings
@@ -242,6 +285,7 @@ export function buildCandidateProtocolDiagnostic(
     ...(details.length ? {details} : {}),
     ...(relationProposalDiagnostics.length ? {relationProposalDiagnostics} : {}),
     ...(claimDiagnostics.length ? {claimDiagnostics} : {}),
+    ...(framing ? {framingDiagnostic: framing} : {}),
     rawChars: inspected.rawChars, canonicalChars: inspected.canonicalBody.trim().length,
     ...(parsed?.contract || payload && typeof payload === 'object' && !Array.isArray(payload) ? {claimCount: claims.length,
       semanticClaimCount: claims.filter(claim => claim && typeof claim === 'object' &&

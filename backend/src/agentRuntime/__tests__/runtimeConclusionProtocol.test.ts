@@ -57,6 +57,26 @@ describe('runtime native declaration completion', () => {
   const repair = (candidate: string, repairInvalid = true) => requestNativeDeclarationCompletion({
     intent: intent('investigation'), completion: {status: 'completed'}, candidate, remainingDeliveryTurns: 1, repairInvalid});
 
+  it.each(['en', 'zh-CN'] as const)('passes a closed framing location to the existing single repair in %s', outputLanguage => {
+    const invalid = contract([claim('a')]).replace('```json', '```JSON');
+    const candidate = `${body}\n\n${invalid}`;
+    const request = repair(candidate)!;
+    expect(request.diagnostic.framingDiagnostic).toEqual({field: 'opening_fence', reason: 'not_exact', line: 6});
+    expect(request.diagnostic).toMatchObject({claimCount: 1, semanticClaimCount: 1, sourceBindingCount: 0});
+    const prompt = buildNativeDeclarationCompletionPrompt({request, intent: intent('investigation'), outputLanguage});
+    expect(prompt).toContain(JSON.stringify(request.diagnostic.framingDiagnostic));
+    expect(request.rejectedDeclaration).toContain('```JSON');
+    expect(request.originalBody).toBe(body);
+    const replacement = contract([claim('a')]);
+    const payload = recoverNativeDeclarationPayload(replacement);
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: JSON.stringify(payload)});
+    expect(accepted).toBeDefined();
+    expect(inspectCandidateProtocol(accepted!).canonicalBody.trimEnd()).toBe(body);
+    expect(recoverNativeDeclarationPayload(accepted!)).toEqual(payload);
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+      candidate: JSON.stringify(payload).slice(0, -1)})).toBeUndefined();
+  });
+
   it.each(['en', 'zh-CN'] as const)('quotes an unclosed native candidate losslessly and checks the complete output schema in %s', outputLanguage => {
     const candidate = `${body}\n<!-- smartperfetto:conclusion-contract@1\n\`\`\`json\n{"claims":[{"text":"< & >"}`;
     const prompt = buildNativeOutputCompletionPrompt({candidate,
