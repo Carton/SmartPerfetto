@@ -119,15 +119,17 @@ display:
       type: percentage
       unit: "%"
       format: percentage
-    - {name: observed_cross_cluster_migrations, label: "已确认跨Cluster迁移", type: number, hidden: true}
-    - {name: unknown_cluster_migrations, label: "Cluster关系未知迁移", type: number, hidden: true}
+    - {name: observed_cross_cluster_migrations, label: "已确认跨Cluster迁移", type: number, hidden: true, unit: "count"}
+    - {name: unknown_cluster_migrations, label: "Cluster关系未知迁移", type: number, hidden: true, unit: "count"}
     - {name: migration_evidence, label: "迁移证据范围", type: string, hidden: true}
     - name: migrations
       label: "核迁移次数"
       type: number
+      unit: "count"
     - name: cross_cluster_migrations
       label: "跨 cluster 迁移"
       type: number
+      unit: "count"
     - {name: priority_min, label: "最小 kernel priority", type: number}
     - {name: priority_max, label: "最大 kernel priority", type: number}
     - {name: priority_value_count, label: "观测 priority 值数", type: number, unit: count}

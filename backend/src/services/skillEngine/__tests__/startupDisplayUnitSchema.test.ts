@@ -828,6 +828,29 @@ describe('startup frequency and causal candidate boundaries', () => {
 
 describe('Skill literal unit authority', () => {
   it.each([
+    ['atomic/startup_freq_rampup.skill.yaml', undefined, 'early_avg_freq_mhz', 'MHz'],
+    ['composite/startup_detail.skill.yaml', 'freq_rampup', 'early_avg_freq_mhz', 'MHz'],
+    ['atomic/startup_freq_rampup.skill.yaml', undefined, 'steady_avg_freq_mhz', 'MHz'],
+    ['composite/startup_detail.skill.yaml', 'freq_rampup', 'steady_avg_freq_mhz', 'MHz'],
+    ['atomic/startup_freq_rampup.skill.yaml', undefined, 'max_freq_mhz', 'MHz'],
+    ['composite/startup_detail.skill.yaml', 'freq_rampup', 'max_freq_mhz', 'MHz'],
+    ['atomic/startup_freq_rampup.skill.yaml', undefined, 'rampup_pct', '%'],
+    ['composite/startup_detail.skill.yaml', 'freq_rampup', 'rampup_pct', '%'],
+    ['atomic/startup_hot_slice_states.skill.yaml', undefined, 'state_pct', '%'],
+    ['composite/startup_detail.skill.yaml', 'hot_slice_states', 'state_pct', '%'],
+    ['atomic/startup_hot_slice_states.skill.yaml', undefined, 'state_coverage_pct', '%'],
+    ['composite/startup_detail.skill.yaml', 'hot_slice_states', 'state_coverage_pct', '%'],
+    ['atomic/startup_critical_tasks.skill.yaml', undefined, 'migrations', 'count'],
+    ['composite/startup_detail.skill.yaml', 'critical_tasks', 'migrations', 'count'],
+    ['atomic/startup_critical_tasks.skill.yaml', undefined, 'cross_cluster_migrations', 'count'],
+    ['composite/startup_detail.skill.yaml', 'critical_tasks', 'cross_cluster_migrations', 'count'],
+    ['atomic/startup_critical_tasks.skill.yaml', undefined, 'observed_cross_cluster_migrations', 'count'],
+    ['composite/startup_detail.skill.yaml', 'critical_tasks', 'observed_cross_cluster_migrations', 'count'],
+    ['atomic/startup_critical_tasks.skill.yaml', undefined, 'unknown_cluster_migrations', 'count'],
+    ['composite/startup_detail.skill.yaml', 'critical_tasks', 'unknown_cluster_migrations', 'count'],
+    ['composite/startup_detail.skill.yaml', 'actionable_main_thread_slices', 'count', 'count'],
+    ['composite/startup_detail.skill.yaml', 'actionable_main_thread_slices', 'percent', '%'],
+    ['composite/startup_detail.skill.yaml', 'actionable_main_thread_slices', 'self_percent', '%'],
     ['atomic/startup_gc_in_range.skill.yaml', undefined, 'total_dur_ms', 'ms'],
     ['atomic/startup_main_thread_slices_in_range.skill.yaml', undefined, 'count', 'events'],
     ['atomic/startup_binder_in_range.skill.yaml', undefined, 'all_percent_of_startup', '%'],
@@ -1080,6 +1103,25 @@ describe('startup primitive unit authority', () => {
         if (column.unit === undefined || !['number', 'duration', 'percentage', 'bytes'].includes(column.type)) continue;
         const producer = child.display.columns.find((item: any) => item.name === column.name);
         expect(producer?.unit).toBe(column.unit);
+      }
+    }
+    const detail = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/composite/startup_detail.skill.yaml'), 'utf8')) as any;
+    for (const [file, stepId, names] of [
+      ['startup_freq_rampup', 'freq_rampup', ['ucpu', 'cpu', 'machine_id']],
+      ['startup_hot_slice_states', 'hot_slice_states', ['upid', 'utid', 'pid', 'tid', 'left_censored', 'right_censored', 'is_unfinished', 'io_wait']],
+      ['startup_critical_tasks', 'critical_tasks', ['upid', 'utid', 'priority_min', 'priority_max']],
+    ] as const) {
+      const child = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic', `${file}.skill.yaml`), 'utf8')) as any;
+      const step = detail.steps.find((item: any) => item.id === stepId);
+      for (const column of step.display.columns) {
+        if (column.unit !== undefined)
+          expect(child.display.columns.find((item: any) => item.name === column.name)?.unit).toBe(column.unit);
+      }
+      for (const producer of [child.display, step.display]) {
+        for (const name of names) {
+          const column = producer.columns.find((item: any) => item.name === name);
+          if (column) expect(column).not.toHaveProperty('unit');
+        }
       }
     }
     const states = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic/startup_main_thread_states_in_range.skill.yaml'), 'utf8')) as any;
