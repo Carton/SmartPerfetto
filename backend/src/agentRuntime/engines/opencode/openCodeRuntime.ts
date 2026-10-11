@@ -2654,10 +2654,10 @@ export class OpenCodeRuntime extends EventEmitter implements IOrchestrator {
     const quickBudget = resolveQuickTurnBudget({env: this.env, enforcement: 'timeout_only'});
     const maxSteps = turnPolicy.budgetMode === 'quick' ? quickBudget.hardCapTurns : resolveAgentRuntimeBudgetConfig(this.env).maxTurns;
     const turnBudget = resolveRuntimeTurnBudget(maxSteps);
-    const promptTimeout = Math.min(
-      numericEnv(this.env[OPENCODE_PROMPT_TIMEOUT_MS_ENV]) ?? DEFAULT_PROMPT_TIMEOUT_MS,
-      turnPolicy.budgetMode === 'quick' ? maxSteps * (numericEnv(this.env.OPENCODE_QUICK_PER_TURN_MS) ?? 30_000) : DEFAULT_PROMPT_TIMEOUT_MS,
-    );
+    const configuredPromptTimeout = numericEnv(this.env[OPENCODE_PROMPT_TIMEOUT_MS_ENV]) ?? DEFAULT_PROMPT_TIMEOUT_MS;
+    const promptTimeout = turnPolicy.budgetMode === 'quick'
+      ? Math.min(configuredPromptTimeout, maxSteps * (numericEnv(this.env.OPENCODE_QUICK_PER_TURN_MS) ?? 30_000))
+      : configuredPromptTimeout;
     const sceneDeadlineMs = resolveSceneProductScope(options, {runId: executionLease.key.runId!, sessionId, traceId})
       ? Date.now() + promptTimeout : undefined;
     // The MCP server stamps tool captures with the run id finalization reads.

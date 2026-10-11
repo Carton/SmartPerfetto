@@ -584,6 +584,13 @@ finalization. OpenAI's progress-aware run can use up to
 defaults to 1200000 ms. A longer observation changes neither native budget nor
 strict acceptance; it cannot make a partial or timed-out result pass.
 
+OpenCode also uses a fixed native deadline: full mode honors an explicit
+`SMARTPERFETTO_OPENCODE_PROMPT_TIMEOUT_MS`, with 1200000 ms as the default.
+Quick mode uses the smaller of that configured timeout and its existing
+turn-count times `OPENCODE_QUICK_PER_TURN_MS` budget. The original absolute
+deadline also bounds finalization; a longer full-mode configuration needs an
+outer `--timeout-ms` that covers it without changing turn or proof requirements.
+
 Keep keys in shell variables or ignored local env files. The old DeepSeek CLI
 and npm names stop with a migration message; they never silently run GLM.
 `npm run verify:e2e:openai-startup` selects the OpenAI adapter with GLM.

@@ -523,6 +523,33 @@ describe('OpenCode authorization at every dispatch and observation', () => {
 });
 
 describe('OpenCode native turn intent and delivery', () => {
+  it.each([
+    ['full', '3600000', 3600000],
+    ['full', undefined, 1200000],
+    ['full', '5000', 5000],
+    ['fast', '3600000', 90000],
+    ['fast', '5000', 5000],
+  ] as const)('preserves the configured %s run deadline (%s) through finalization', async (analysisMode, timeout, expected) => withBackendDataDir(async () => {
+    const now = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+    let context: ReturnType<typeof finalizationContext.takeFinalizationContext>;
+    try {
+      const harness = createNativeIntentHarness({env: timeout === undefined ? {} : {
+        SMARTPERFETTO_OPENCODE_PROMPT_TIMEOUT_MS: timeout,
+      }});
+      const result = await harness.runtime.analyze('same scope', 'opencode-configured-deadline', 'trace-opencode', {analysisMode});
+      context = finalizationContext.takeFinalizationContext(result);
+      expect(context?.deadlineMs).toBe(now + expected);
+      expect(harness.configs[1].agent.smartperfetto.maxSteps).toBe(analysisMode === 'fast' ? 2 : 8);
+      await context!.dispatchText({prompt: 'Review the current candidate', systemPrompt: '',
+        signal: new AbortController().signal, deadlineMs: now + expected + 60000, outputByteLimit: 8192});
+      const calls = mockOpenCodeIntentTransport.mock.calls;
+      expect(calls[calls.length - 1][0].deadlineMs).toBe(now + expected);
+      expect(harness.serverCloses.every(close => close.mock.calls.length === 1)).toBe(true);
+      expect(harness.bridgeClose).toHaveBeenCalledTimes(1);
+    } finally {context?.dispose(); clock.mockRestore();}
+  }));
+
   it('scene runtime matrix: runs the pinned OpenCode provider through shared bridge proposal and private seal', async () => {
     const f = createSceneRuntimeMatrixFixture('opencode');
     let definitions: any[] = [];
