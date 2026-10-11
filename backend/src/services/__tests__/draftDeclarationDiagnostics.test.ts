@@ -125,6 +125,88 @@ describe('draft declaration diagnostics', () => {
     expect(await diagnoseConclusionDraft({...f.input, declarationJson: JSON.stringify(f.contract)})).toMatchObject({
       diagnostics: [{referenceReasons: expect.arrayContaining(['missing'])}]});
   });
+  it('locates conflicting issued identifiers without repairing a composite reference or its scope', async () => {
+    const f = fixture();
+    const ref = f.contract.claims[0].references[0];
+    ref.sourceArtifactId = ref.artifactId;
+    ref.evidenceRefId = 'REPORT_LOCAL_E1';
+    const declarationJson = JSON.stringify(f.contract);
+    const read = jest.fn(f.input.readView.resolveReferences);
+    const result = await diagnoseConclusionDraft({...f.input, declarationJson,
+      readView: {...f.input.readView, resolveReferences: read}});
+    expect(result).toMatchObject({state: 'diagnosed', coverageNotChecked: true, finalCertification: false,
+      diagnostics: [{referenceReasons: ['missing'], producerUnits: [], referenceDiagnostics: [
+        {collection: 'references', referenceOrdinal: 1, status: 'missing', reason: 'identifier_conflict',
+          matchedFields: ['artifactId', 'sourceArtifactId'], conflictingFields: ['evidenceRefId']},
+        {collection: 'subjectRefs', referenceOrdinal: 1, status: 'missing', reason: 'identifier_conflict',
+          matchedFields: ['artifactId', 'sourceArtifactId'], conflictingFields: ['evidenceRefId']},
+      ]}]});
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(f.contract)).toBe(declarationJson);
+    expect(JSON.stringify(result)).not.toMatch(/REPORT_LOCAL_E1|evidence:fixture|7\.123456|never return retained private cell/);
+    expect(JSON.stringify(result)).not.toContain(ref.artifactId);
+  });
+  it('omits unknown failure strings and private locator details, exposing only identifier field names', async () => {
+    const f = fixture();
+    const resolveReferences = jest.fn(async (requests: Parameters<typeof f.input.readView.resolveReferences>[0]) =>
+      requests.map(request => ({key: request.key, status: 'missing' as const, reason: 'PRIVATE_REASON_CANARY',
+        locatorDetail: {matchedFields: ['artifactId', 'PRIVATE_MATCH_CANARY'],
+          conflictingFields: ['evidenceRefId', 'PRIVATE_CONFLICT_CANARY'],
+          availableColumns: ['PRIVATE_COLUMN_CANARY'], rowCount: 123456789}})));
+    const result = await diagnoseConclusionDraft({...f.input, readView: {...f.input.readView, resolveReferences}});
+    expect(result).toMatchObject({diagnostics: [{referenceDiagnostics: [
+      {collection: 'references', referenceOrdinal: 1, status: 'missing',
+        matchedFields: ['artifactId'], conflictingFields: ['evidenceRefId']},
+      {collection: 'subjectRefs', referenceOrdinal: 1, status: 'missing'},
+    ]}]});
+    expect(resolveReferences).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|availableColumns|rowCount|123456789/);
+    const details = 'diagnostics' in result ? result.diagnostics[0].referenceDiagnostics : [];
+    expect(details.every(detail => !('reason' in detail))).toBe(true);
+  });
+  it('bounds locator feedback without dropping the submitted claims or references', async () => {
+    const f = fixture(); const ref = f.contract.claims[0].references[0];
+    f.contract.claims[0].references = Array.from({length: MAX_CLAIM_DIAGNOSTICS + 2}, (_, index) =>
+      ({...ref, artifactId: `not-retained-${index}`}));
+    const declarationJson = JSON.stringify(f.contract);
+    const result = await diagnoseConclusionDraft({...f.input, declarationJson});
+    expect('diagnostics' in result ? result.diagnostics[0].referenceDiagnostics : undefined).toHaveLength(MAX_CLAIM_DIAGNOSTICS);
+    expect(result).toMatchObject({evaluatedClaimCount: 1, diagnostics: [{omittedReferenceDiagnosticCount: 2}]});
+    expect('diagnostics' in result && result.diagnostics[0].referenceDiagnostics[0]).toMatchObject({
+      collection: 'references', referenceOrdinal: 1, reason: 'evidence_not_retained'});
+    expect(JSON.stringify(f.contract)).toBe(declarationJson);
+  });
+  it('reports only a safe numeric syntax position and payload length, never parser text', async () => {
+    const f = fixture(); const declarationJson = '{"private":"PRIVATE_JSON_CANARY","value":1,}';
+    const read = jest.fn(f.input.readView.resolveReferences);
+    const result = await diagnoseConclusionDraft({...f.input, declarationJson,
+      readView: {...f.input.readView, resolveReferences: read}});
+    expect(result).toEqual({diagnosticOnly: true, coverageNotChecked: true, finalCertification: false,
+      state: 'invalid_input', reason: 'invalid_json',
+      syntaxDiagnostic: {payloadChars: declarationJson.length, offsetUtf16: declarationJson.length - 1}});
+    expect(read).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_JSON_CANARY|SyntaxError|column|line/);
+    const truncated = await diagnoseConclusionDraft({...f.input, declarationJson: '{'});
+    expect(truncated).toMatchObject({reason: 'invalid_json', syntaxDiagnostic: {payloadChars: 1}});
+    const unknownFormat = await diagnoseConclusionDraft({...f.input, declarationJson: 'PRIVATE_JSON_CANARY'});
+    expect('syntaxDiagnostic' in unknownFormat && unknownFormat.syntaxDiagnostic).not.toHaveProperty('offsetUtf16');
+    expect(JSON.stringify(unknownFormat)).not.toContain('PRIVATE_JSON_CANARY');
+  });
+  it.each([
+    ['body', '汉'.repeat(Math.floor(DRAFT_DECLARATION_MAX_BYTES / 3) + 1)],
+    ['declarationJson', '汉'.repeat(Math.floor(DRAFT_DECLARATION_MAX_BYTES / 3) + 1)],
+    ['body', ' \n\t'],
+  ] as const)('locates the actual UTF-8 input budget failure in %s', async (field, value) => {
+    const f = fixture(); const input = {...f.input, [field]: value};
+    const read = jest.fn(f.input.readView.resolveReferences);
+    const result = await diagnoseConclusionDraft({...input, readView: {...f.input.readView, resolveReferences: read}});
+    expect(result).toEqual({diagnosticOnly: true, coverageNotChecked: true, finalCertification: false,
+      state: 'invalid_input', reason: 'input_budget_or_body_invalid', inputBudget: {
+        bodyBytes: Buffer.byteLength(input.body, 'utf8'), declarationBytes: Buffer.byteLength(input.declarationJson, 'utf8'),
+        maxBytes: DRAFT_DECLARATION_MAX_BYTES, emptyBody: !input.body.trim(),
+      }});
+    expect(read).not.toHaveBeenCalled();
+  });
   it('reports repeated and nonexistent quotes, accepting explicit zero-based occurrences', async () => {
     const f = fixture(); const body = 'Elapsed 7.1 ms. Again 7.1 ms.';
     expect(await diagnoseConclusionDraft({...f.input, body})).toMatchObject({diagnostics: [{

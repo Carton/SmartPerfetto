@@ -3,10 +3,11 @@
 
 import {MAX_CLAIM_DIAGNOSTICS, MAX_CONCLUSION_STRUCTURE_DETAILS, copyConclusionClaimDiagnostic,
   isConclusionClaimDiagnostic, isConclusionContractStructureDetail, isConclusionRelationProposalDiagnostic,
-  isConclusionRootParseIssue, parseConclusionContractDeclaration} from '../agent/core/conclusionContract';
+  isConclusionRootParseIssue, parseConclusionContractDeclaration,
+  type ConclusionContractClaimReference} from '../agent/core/conclusionContract';
 import {analysisDeliveryFingerprint} from '../types/analysisDelivery';
 import {claimUnitFor} from '../utils/claimUnits';
-import {prepareClaimEvidence, evidenceReferenceKey} from './evidence/claimEvidencePreparation';
+import {prepareClaimEvidence, evidenceReferenceKey, preparedReferenceResolution} from './evidence/claimEvidencePreparation';
 import {getCapturedAnchorFacts} from './evidence/evidenceCapture';
 import {MAX_EVIDENCE_READ_REFERENCES, type EvidenceReadView} from './evidence/evidenceReadView';
 import {isIssuedInvestigationEvidenceSnapshot} from './evidence/investigationEvidenceLedger';
@@ -19,6 +20,24 @@ type DiagnosticInput = {body: unknown; declarationJson: unknown; runId?: string;
   readView?: EvidenceReadView; signal?: AbortSignal; assertCurrent?: () => void};
 export const draftDiagnosticOwnerKey = (runId: string, sessionId: string) =>
   `draft-declaration:${analysisDeliveryFingerprint({runId, sessionId})}`;
+
+// Diagnostic projection only: these existing read codes do not classify proof
+// or authorize a fallback. Unknown producer strings never cross this boundary.
+const REFERENCE_FAILURE_CODES = new Set([
+  'binding_ineligible', 'execution_read_unavailable', 'execution_read_failed', 'read_cancelled',
+  'read_budget_exhausted', 'multiple_evidence_records', 'identifier_conflict', 'evidence_not_retained',
+  'execution_witness_mismatch', 'trace_capture_mismatch', 'trace_outside_read_scope',
+  'execution_witness_unavailable', 'unmapped_evidence_shape', 'invalid_evidence_columns',
+  'unmapped_evidence_columns', 'display_transformation_unmapped', 'unsupported_raw_cell',
+  'execution_unavailable', 'execution_skipped', 'duplicate_evidence_columns', 'invalid_metadata_locator',
+  'evidence_read_size_or_deadline_exhausted', 'invalid_row_index', 'invalid_row_selector',
+  'selector_scan_incomplete', 'cell_read_budget_exhausted', 'row_selector_not_unique', 'row_selector_not_found', 'row_index_selector_conflict',
+  'row_locator_required', 'row_index_out_of_range', 'required_column_missing',
+  'whole_result_identity_scan_incomplete', 'whole_result_identity_cell_unreadable', 'whole_result_identity_conflict',
+]);
+const IDENTIFIER_FIELDS = ['evidenceRefId', 'artifactId', 'sourceArtifactId', 'sourceToolCallId', 'sourceRef'] as const;
+const identifierFields = (fields: readonly string[] | undefined) => Array.isArray(fields)
+  ? IDENTIFIER_FIELDS.filter(field => fields.includes(field)) : [];
 
 /** Only local diagnostics: no semantic call, acquisition, completion, persistence or candidate admission. */
 export async function diagnoseConclusionDraft(input: DiagnosticInput) {
@@ -34,12 +53,20 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
   const {body, declarationJson} = input;
   if (typeof body !== 'string' || typeof declarationJson !== 'string')
     return {...boundary, state: 'invalid_input' as const, reason: 'input_type_invalid'};
-  if (!body.trim() || Buffer.byteLength(body, 'utf8') > DRAFT_DECLARATION_MAX_BYTES ||
-      Buffer.byteLength(declarationJson, 'utf8') > DRAFT_DECLARATION_MAX_BYTES)
-    return {...boundary, state: 'invalid_input' as const, reason: 'input_budget_or_body_invalid'};
+  const inputBudget = {bodyBytes: Buffer.byteLength(body, 'utf8'),
+    declarationBytes: Buffer.byteLength(declarationJson, 'utf8'), maxBytes: DRAFT_DECLARATION_MAX_BYTES,
+    emptyBody: !body.trim()};
+  if (inputBudget.emptyBody || inputBudget.bodyBytes > inputBudget.maxBytes || inputBudget.declarationBytes > inputBudget.maxBytes)
+    return {...boundary, state: 'invalid_input' as const, reason: 'input_budget_or_body_invalid', inputBudget};
   let raw: unknown;
-  try {raw = JSON.parse(declarationJson);} catch {
-    return {...boundary, state: 'invalid_input' as const, reason: 'invalid_json'};
+  try {raw = JSON.parse(declarationJson);} catch (error) {
+    const position = error instanceof SyntaxError
+      ? /\bat position (\d+)(?: \(line \d+ column \d+\))?$/.exec(error.message)?.[1] : undefined;
+    const offset = position === undefined ? undefined : Number(position);
+    const syntaxDiagnostic = {payloadChars: declarationJson.length,
+      ...(offset !== undefined && Number.isSafeInteger(offset) && offset >= 0 && offset <= declarationJson.length
+        ? {offsetUtf16: offset} : {})};
+    return {...boundary, state: 'invalid_input' as const, reason: 'invalid_json', syntaxDiagnostic};
   }
   if (raw && typeof raw === 'object' && Array.isArray((raw as {claims?: unknown}).claims) &&
       (raw as {claims: unknown[]}).claims.length > MAX_EVIDENCE_READ_REFERENCES)
@@ -88,14 +115,33 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
     });
     const referenceReasons = [...new Set((claim.referenceResults ?? []).filter(reference => reference.status !== 'matched')
       .map(reference => reference.status))];
+    const collections: readonly [string, readonly ConclusionContractClaimReference[] | undefined][] = [
+      ['references', declaration?.references],
+      ['artifactRefs', declaration?.artifactRefs as readonly ConclusionContractClaimReference[] | undefined],
+      ['subjectRefs', subjects], ['objectRefs', declaration?.semantics?.scope.objectRefs],
+    ];
+    const referenceDiagnostics = collections.flatMap(([collection, references]) => (references ?? []).flatMap((ref, ordinal) => {
+      const resolution = preparedReferenceResolution(preparedEvidence, ref);
+      if (!resolution || resolution.status === 'resolved' ||
+          !['missing', 'ambiguous', 'incomplete', 'denied'].includes(resolution.status)) return [];
+      const matchedFields = identifierFields(resolution.locatorDetail?.matchedFields);
+      const conflictingFields = identifierFields(resolution.locatorDetail?.conflictingFields);
+      return [{collection, referenceOrdinal: ordinal + 1, status: resolution.status,
+        ...(REFERENCE_FAILURE_CODES.has(resolution.reason) ? {reason: resolution.reason} : {}),
+        ...(matchedFields.length ? {matchedFields} : {}), ...(conflictingFields.length ? {conflictingFields} : {})}];
+    }));
     return {claimOrdinal: index + 1, claimId: claim.claimId.slice(0, 128),
       finiteReason: claim.deterministicProof?.reason ?? 'not_checked', referenceReasons, producerUnits,
+      referenceDiagnostics: referenceDiagnostics.slice(0, MAX_CLAIM_DIAGNOSTICS),
+      ...(referenceDiagnostics.length > MAX_CLAIM_DIAGNOSTICS
+        ? {omittedReferenceDiagnosticCount: referenceDiagnostics.length - MAX_CLAIM_DIAGNOSTICS} : {}),
       ...(presentation ? {presentationReason: presentation.reason, quoteOccurrences} : {})};
   });
   // Errors first, without dropping or rewriting any declaration. This is bounded feedback, never coverage.
-  diagnostics.sort((left, right) => Number(right.referenceReasons.length > 0 ||
+  diagnostics.sort((left, right) => Number(right.referenceReasons.length > 0 || right.referenceDiagnostics.length > 0 ||
     (right.presentationReason !== undefined && right.presentationReason !== 'display_matches')) -
-    Number(left.referenceReasons.length > 0 || (left.presentationReason !== undefined && left.presentationReason !== 'display_matches')));
+    Number(left.referenceReasons.length > 0 || left.referenceDiagnostics.length > 0 ||
+      (left.presentationReason !== undefined && left.presentationReason !== 'display_matches')));
   return {...boundary, state: 'diagnosed' as const, schemaDiagnostics,
     evaluatedClaimCount: finite.claimVerificationResult.claimResults.length,
     omittedDiagnosticCount: Math.max(0, diagnostics.length - MAX_CLAIM_DIAGNOSTICS),
