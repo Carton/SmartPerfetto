@@ -65,10 +65,12 @@ display:
     - name: percent
       label: "占比"
       type: percentage
+      unit: "%"
       format: percentage
     - name: count
       label: "次数"
       type: number
+      unit: events
       format: compact
     - name: io_wait
       label: "io_wait"

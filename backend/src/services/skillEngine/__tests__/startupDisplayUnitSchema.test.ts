@@ -836,6 +836,9 @@ describe('Skill literal unit authority', () => {
     ['composite/startup_detail.skill.yaml', 'cpu_freq_analysis', 'avg_freq_mhz', 'MHz'],
     ['composite/scrolling_analysis.skill.yaml', 'smoothness_basis', 'frames', 'frames'],
     ['composite/scrolling_analysis.skill.yaml', 'smoothness_basis', 'buffer_stuffing_frames', 'frames'],
+    ['composite/startup_analysis.skill.yaml', 'startup_quality', 'sample_count', 'events'],
+    ['composite/startup_analysis.skill.yaml', 'startup_quality', 'blocker_count', 'count'],
+    ['composite/startup_analysis.skill.yaml', 'startup_quality', 'warning_count', 'count'],
   ])('keeps the registered %s %s producer unit in an unchanged captured value', async (file, stepId, column, unit) => {
     const definition = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills', file!), 'utf8')) as any;
     const node = stepId ? definition.steps.find((step: any) => step.id === stepId) : definition;
@@ -942,12 +945,33 @@ describe('startup primitive unit authority', () => {
     ['startup_breakdown_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_breakdown_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_breakdown_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
-    ['startup_breakdown_in_range', 'percent', '%', 'candidate', 'unit_authority_unknown'],
+    ['startup_breakdown_in_range', 'count', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_breakdown_in_range', 'percent', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_breakdown_in_range', 'category_percent', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_states_in_range', 'count', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_states_in_range', 'percent', '%', 'proved', 'numeric_operator_proved'],
     ['startup_main_thread_file_io_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_main_thread_file_io_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_main_thread_file_io_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_main_thread_file_io_in_range', 'all_total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
-    ['startup_main_thread_file_io_in_range', 'all_percent_of_startup', '%', 'candidate', 'unit_authority_unknown'],
+    ['startup_main_thread_file_io_in_range', 'count', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_file_io_in_range', 'percent_of_startup', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_file_io_in_range', 'all_percent_of_startup', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_sync_binder_in_range', 'call_count', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_sync_binder_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_sync_binder_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_sync_binder_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_sync_binder_in_range', 'percent_of_startup', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_sync_binder_in_range', 'all_percent_of_startup', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_class_loading_in_range', 'count', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_class_loading_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_class_loading_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_class_loading_in_range', 'percent_of_startup', '%', 'proved', 'numeric_operator_proved'],
+    ['startup_sched_latency_in_range', 'count', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_sched_latency_in_range', 'severe_delays', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_sched_latency_in_range', 'all_severe_delays', 'events', 'proved', 'numeric_operator_proved'],
+    ['startup_sched_latency_in_range', 'all_max_wait_ms', 'ms', 'proved', 'numeric_operator_proved'],
+    ['startup_main_thread_binder_blocking_in_range', 'dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_binder_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_binder_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_binder_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
@@ -969,7 +993,10 @@ describe('startup primitive unit authority', () => {
     let executedSkill = name;
     let inputNames = skill.inputs.map((input: any) => input.name);
     const parentStepId: Record<string, string> = {startup_breakdown_in_range: 'startup_breakdown',
-      startup_main_thread_file_io_in_range: 'main_thread_file_io', startup_binder_in_range: 'startup_binder'};
+      startup_main_thread_file_io_in_range: 'main_thread_file_io', startup_binder_in_range: 'startup_binder',
+      startup_main_thread_states_in_range: 'main_thread_state_during_startup',
+      startup_main_thread_sync_binder_in_range: 'main_thread_sync_binder', startup_class_loading_in_range: 'class_loading',
+      startup_sched_latency_in_range: 'sched_latency_during_startup', startup_main_thread_binder_blocking_in_range: 'main_thread_binder_blocking'};
     if (parentStepId[name]) {
       const parent = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/composite/startup_analysis.skill.yaml'), 'utf8')) as any;
       const parentStep = parent.steps.find((step: any) => step.id === parentStepId[name]);
@@ -1017,16 +1044,49 @@ describe('startup primitive unit authority', () => {
     const atomic = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic/startup_breakdown_in_range.skill.yaml'), 'utf8')) as any;
     const parentSkill = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/composite/startup_analysis.skill.yaml'), 'utf8')) as any;
     const parent = parentSkill.steps.find((step: any) => step.id === 'startup_breakdown');
-    for (const [column, unit] of [['total_dur_ms', 'ms'], ['avg_dur_ms', 'ms'], ['max_dur_ms', 'ms']]) {
+    for (const [column, unit] of [['total_dur_ms', 'ms'], ['avg_dur_ms', 'ms'], ['max_dur_ms', 'ms'],
+      ['count', 'events'], ['percent', '%'], ['category_percent', '%']]) {
       expect(atomic.display.columns.find((item: any) => item.name === column)?.unit).toBe(unit);
       expect(parent.display.columns.find((item: any) => item.name === column)?.unit).toBe(unit);
     }
     for (const producer of [atomic.display, parent.display]) {
       expect(producer.columns.find((item: any) => item.name === 'percent')).toMatchObject({
-        type: 'percentage', format: 'percentage',
+        type: 'percentage', format: 'percentage', unit: '%',
       });
-      expect(producer.columns.find((item: any) => item.name === 'percent')).not.toHaveProperty('unit');
     }
+  });
+
+  it('computes authored breakdown percentages in the 0–100 scale before top-k projection', () => {
+    const atomic = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic/startup_breakdown_in_range.skill.yaml'), 'utf8')) as any;
+    const sql = atomic.sql.replace(/\$\{package\}/g, '').replace(/\$\{(?:startup_id|start_ts|end_ts)\}/g, 'NULL')
+      .replace('${top_k|15}', '1');
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE android_startups(startup_id INTEGER, package TEXT, ts INTEGER, dur INTEGER);
+        CREATE TABLE android_startup_opinionated_breakdown(startup_id INTEGER, reason TEXT, dur INTEGER);
+        INSERT INTO android_startups VALUES(1,'app',0,500000000);
+        INSERT INTO android_startup_opinionated_breakdown VALUES
+          (1,'activity_start',300000000),(1,'activity_resume',150000000),(1,'binder',50000000);`);
+      expect(db.prepare(sql).all()).toEqual([{reason: 'activity_start', count: 1, total_dur_ms: 300,
+        avg_dur_ms: 300, max_dur_ms: 300, percent: 60, category: 'AppPhase', category_percent: 90}]);
+    } finally {db.close();}
+  });
+
+  it('matches authored units throughout direct startup child and parent displays without assigning flag units', () => {
+    const parent = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/composite/startup_analysis.skill.yaml'), 'utf8')) as any;
+    for (const step of parent.steps.filter((item: any) => item.type === 'skill')) {
+      const child = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic', `${step.skill}.skill.yaml`), 'utf8')) as any;
+      for (const column of step.display.columns) {
+        if (column.unit === undefined || !['number', 'duration', 'percentage', 'bytes'].includes(column.type)) continue;
+        const producer = child.display.columns.find((item: any) => item.name === column.name);
+        expect(producer?.unit).toBe(column.unit);
+      }
+    }
+    const states = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic/startup_main_thread_states_in_range.skill.yaml'), 'utf8')) as any;
+    expect(states.display.columns.find((item: any) => item.name === 'io_wait')).not.toHaveProperty('unit');
+    const eventStep = parent.steps.find((item: any) => item.id === 'get_startups');
+    for (const name of ['startup_id', 'upid', 'type_reclassified'])
+      expect(eventStep.display.columns.find((item: any) => item.name === name)).not.toHaveProperty('unit');
   });
 
   it('declares the system busy percentage as an authoritative Skill value', async () => {

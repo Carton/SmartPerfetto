@@ -327,6 +327,10 @@ Keep these boundaries intact:
   body, trace, registry and intent. Decode only issued handles or unambiguous
   original IDs; unknown, stale, duplicate and ambiguous references fail closed.
   Stored assessments retain original ledger IDs and provenance.
+- Metric ledger IDs bind the capture row/metric and the immutable issued read
+  registration identity. Multiple artifact projections retain distinct IDs;
+  repeated reads of one registration keep its ID. No record or provenance is
+  discarded to resolve a collision.
 - The semantic review response degrades per item, never upward. Location ids
   are short (`L<line>.<digest prefix>`) but still resolved exactly per request.
   An item the parser cannot use becomes `unknown`; an `inconsistent` judgment

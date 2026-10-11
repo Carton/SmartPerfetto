@@ -220,12 +220,15 @@ steps:
         - name: sample_count
           label: "样本数"
           type: number
+          unit: events
         - name: blocker_count
           label: "阻断问题"
           type: number
+          unit: count
         - name: warning_count
           label: "告警问题"
           type: number
+          unit: count
         - name: quality_status
           label: "门禁状态"
           type: string
@@ -372,6 +375,7 @@ steps:
         - name: count
           label: "次数"
           type: number
+          unit: events
           format: compact
         - name: total_dur_ms
           label: "总耗时"
@@ -391,6 +395,7 @@ steps:
         - name: percent
           label: "占比"
           type: percentage
+          unit: "%"
           format: percentage
         - name: category
           label: "类别"
@@ -398,6 +403,7 @@ steps:
         - name: category_percent
           label: "类别占比"
           type: percentage
+          unit: "%"
           format: percentage
     params:
       package: "${package}"
@@ -511,6 +517,7 @@ steps:
         - name: count
           label: "次数"
           type: number
+          unit: events
           format: compact
         - name: total_dur_ms
           label: "总耗时"
@@ -530,11 +537,12 @@ steps:
         - name: percent_of_startup
           label: "启动占比"
           type: percentage
+          unit: "%"
           format: percentage
         - name: startup_type
           label: "启动类型"
           type: string
-        - {name: all_percent_of_startup, label: "全部文件 IO 启动占比", type: number, hidden: true}
+        - {name: all_percent_of_startup, label: "全部文件 IO 启动占比", type: number, unit: "%", hidden: true}
         - {name: all_total_dur_ms, label: "全部文件 IO 总耗时", type: number, unit: ms, hidden: true}
     params:
       package: "${package}"
@@ -638,6 +646,7 @@ steps:
         - name: call_count
           label: "调用次数"
           type: number
+          unit: events
           format: compact
         - name: total_dur_ms
           label: "总耗时"
@@ -657,8 +666,9 @@ steps:
         - name: percent_of_startup
           label: "启动占比"
           type: percentage
+          unit: "%"
           format: percentage
-        - {name: all_percent_of_startup, label: "全部主线程同步 Binder 启动占比", type: number, hidden: true}
+        - {name: all_percent_of_startup, label: "全部主线程同步 Binder 启动占比", type: number, unit: "%", hidden: true}
     params:
       package: "${package}"
       startup_id: "${startup_id}"
@@ -740,10 +750,12 @@ steps:
         - name: percent
           label: "占比"
           type: percentage
+          unit: "%"
           format: percentage
         - name: count
           label: "次数"
           type: number
+          unit: events
           format: compact
         - name: blocked_functions
           label: "阻塞函数"
@@ -777,6 +789,7 @@ steps:
         - name: count
           label: "次数"
           type: number
+          unit: events
           format: compact
         - name: total_dur_ms
           label: "总耗时"
@@ -791,6 +804,7 @@ steps:
         - name: percent_of_startup
           label: "启动占比"
           type: percentage
+          unit: "%"
           format: percentage
     params:
       package: "${package}"
@@ -867,6 +881,7 @@ steps:
         - name: count
           label: "次数"
           type: number
+          unit: events
           format: compact
         - name: total_wait_ms
           label: "总等待"
@@ -886,8 +901,9 @@ steps:
         - name: severe_delays
           label: "严重延迟次数"
           type: number
-        - {name: all_severe_delays, label: "全部状态严重延迟次数", type: number, hidden: true}
-        - {name: all_max_wait_ms, label: "全部状态最大等待", type: number, hidden: true}
+          unit: events
+        - {name: all_severe_delays, label: "全部状态严重延迟次数", type: number, unit: events, hidden: true}
+        - {name: all_max_wait_ms, label: "全部状态最大等待", type: number, unit: ms, hidden: true}
     params:
       package: "${package}"
       startup_id: "${startup_id}"

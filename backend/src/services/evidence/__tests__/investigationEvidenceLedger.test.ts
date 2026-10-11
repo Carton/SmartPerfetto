@@ -217,6 +217,58 @@ describe('trusted investigation evidence ledger', () => {
     expect(snapshot.records[1]).toMatchObject({utid: 44, window: {start: 110, end: 210}});
   });
 
+  it('keeps distinct authorized read IDs when one capture is registered under two artifact locators', async () => {
+    const {store, display, artifactId} = await fixture();
+    const before = store.createEvidenceReadView(options).investigationEvidence!();
+    const witness = evidenceTableFor(display)!;
+    const secondArtifact = store.store({skillId: 'ledger_fixture', data: display.data,
+      traceProvenance: buildTraceProcessorQueryProvenance({traceId: 'trace', traceSide: 'current'}),
+      sourceToolCallId: 'invoke_skill:1:fixture'});
+    await runWithinRuntimeToolInvocation({toolCallId: 'call'}, async () =>
+      store.registerEvidenceCapture(secondArtifact, witness, {evidenceRefId: 'evidence:second-read', originRunId: 'run-1'}));
+    const snapshot = store.createEvidenceReadView(options).investigationEvidence!();
+    expect(snapshot.records).toHaveLength(2);
+    expect(new Set(snapshot.records.map(record => record.recordId)).size).toBe(2);
+    expect(snapshot.records.map(record => ({artifactId: record.artifactId, evidenceRefId: record.evidenceRefId})))
+      .toEqual([{artifactId, evidenceRefId: 'evidence:fixture'}, {artifactId: secondArtifact, evidenceRefId: 'evidence:second-read'}]);
+    for (const record of snapshot.records) {
+      expect(record.recordId.startsWith(`${witness.captureId}:0:`)).toBe(true);
+      expect(record).toMatchObject({captureId: witness.captureId, rowIndex: 0, value: 1234, unit: 'kHz',
+        status: 'observed', originRunId: 'run-1', origin: 'current_run', window: {start: 10, end: 110}});
+    }
+    expect(snapshot.records[0]).toEqual(before.records[0]);
+    expect(store.createEvidenceReadView(options).investigationEvidence!().records).toEqual(snapshot.records);
+    expect(snapshot.fingerprint).toBe(investigationEvidenceFingerprint(snapshot));
+  });
+
+  it('binds registration identity across stores without treating a reused capture as a new observation', async () => {
+    const {store, display} = await fixture();
+    const original = store.createEvidenceReadView(options).investigationEvidence!().records[0];
+    const anotherStore = new ArtifactStore();
+    anotherStore.observeInvestigationTool(observation('completed'), 'run-1');
+    const artifactId = anotherStore.store({skillId: 'ledger_fixture', data: display.data,
+      traceProvenance: buildTraceProcessorQueryProvenance({traceId: 'trace', traceSide: 'current'}),
+      sourceToolCallId: 'invoke_skill:1:fixture'});
+    await runWithinRuntimeToolInvocation({toolCallId: 'call'}, async () =>
+      anotherStore.registerEvidenceCapture(artifactId, evidenceTableFor(display)!, {evidenceRefId: 'evidence:fixture', originRunId: 'run-1'}));
+    const reused = anotherStore.createEvidenceReadView({...options, currentRunId: 'run-2'}).investigationEvidence!().records[0];
+    expect(reused.recordId).not.toBe(original.recordId);
+    expect(reused).toMatchObject({captureId: original.captureId, rowIndex: original.rowIndex, originRunId: 'run-1',
+      origin: 'reused', value: original.value, unit: original.unit, status: original.status});
+  });
+
+  it('gives a later-run registration a new read ID while retaining the capture origin', async () => {
+    const {store, display, artifactId} = await fixture();
+    const original = store.createEvidenceReadView(options).investigationEvidence!().records[0];
+    await runWithinRuntimeToolInvocation({toolCallId: 'call', runId: 'run-2'}, async () =>
+      store.registerEvidenceCapture(artifactId, evidenceTableFor(display)!, {evidenceRefId: 'evidence:next-run', originRunId: 'run-2'}));
+    const reused = store.createEvidenceReadView({...options, currentRunId: 'run-2'}).investigationEvidence!().records[0];
+    expect(reused.recordId).not.toBe(original.recordId);
+    expect(reused).toMatchObject({captureId: original.captureId, rowIndex: original.rowIndex, originRunId: 'run-1',
+      origin: 'reused', value: original.value, unit: original.unit, status: original.status});
+    expect(store.createEvidenceReadView({...options, currentRunId: 'run-2'}).investigationEvidence!().records[0]).toEqual(reused);
+  });
+
   it('preserves declared CPU/machine identity, null unknowns, role and aggregation', async () => {
     const {store} = await fixture([[...row, 1, 9, null, 'window-1', 'global_context']], {
       extraColumns: ['cpu', 'ucpu', 'machine', 'window_id', 'scope_role'], declaration: {...declaration,

@@ -50,6 +50,7 @@ display:
     - name: count
       label: "次数"
       type: number
+      unit: events
       format: compact
     - name: total_wait_ms
       label: "总等待"
@@ -69,8 +70,9 @@ display:
     - name: severe_delays
       label: "严重延迟次数"
       type: number
-    - {name: all_severe_delays, label: "全部状态严重延迟次数", type: number, hidden: true}
-    - {name: all_max_wait_ms, label: "全部状态最大等待", type: number, hidden: true}
+      unit: events
+    - {name: all_severe_delays, label: "全部状态严重延迟次数", type: number, unit: events, hidden: true}
+    - {name: all_max_wait_ms, label: "全部状态最大等待", type: number, unit: ms, hidden: true}
 
 sql: |
   SELECT

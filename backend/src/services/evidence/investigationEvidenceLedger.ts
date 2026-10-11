@@ -475,6 +475,12 @@ export function buildInvestigationEvidenceSnapshot(captures: readonly EvidenceRe
     const originRunId = record.originRunId;
     const origin = originRunId && options.currentRunId
       ? originRunId === options.currentRunId ? 'current_run' : 'reused' : 'unknown';
+    // One immutable witness can be registered under multiple authorized read
+    // locators. Bind their issued registration identity, not merely its cell:
+    // repeated views stay stable while other stores/generations remain distinct.
+    const readIdentity = evidenceCaptureHash({storeId: record.storeId, generation: record.generation, originRunId,
+      traceId: meta.traceId, traceSide: meta.traceSide, artifactId: meta.artifactId,
+      evidenceRefId: meta.evidenceRefId, sourceToolCallId: meta.sourceToolCallId});
     for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex++) {
       if (records.length >= LEDGER_RECORD_BUDGET) {incomplete('ledger_record_budget_exhausted'); break;}
       const read = (column: string | undefined) => column ? table.rows[rowIndex][table.columns.indexOf(column)] : undefined;
@@ -514,7 +520,7 @@ export function buildInvestigationEvidenceSnapshot(captures: readonly EvidenceRe
         if (status === 'observed' && metric.coverage && exactNs(coverage) && exactNs(denominator) &&
             BigInt(coverage) < BigInt(denominator)) status = 'partial';
         if (status === 'unknown') issues.add('capture_metric_unknown');
-        records.push({recordId: `${witness.captureId}:${rowIndex}:${metricIndex}`, captureId: witness.captureId, rowIndex,
+        records.push({recordId: `${witness.captureId}:${rowIndex}:${metricIndex}:${readIdentity}`, captureId: witness.captureId, rowIndex,
           evidenceRefId: meta.evidenceRefId, artifactId: meta.artifactId, sourceToolCallId: meta.sourceToolCallId,
           skillId: binding.skillId, stepId: binding.stepId, definitionFingerprint: binding.definitionFingerprint,
           selectedSqlHash: binding.selectedSqlHash, traceId: binding.traceId, traceSide: meta.traceSide as 'current' | 'reference',

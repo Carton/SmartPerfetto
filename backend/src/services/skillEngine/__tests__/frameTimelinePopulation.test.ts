@@ -63,9 +63,9 @@ describe('scrolling_analysis frame_timeline_population', () => {
     expect(population('')).toMatchObject({total_frames: 0, jank_frames: 0, process_count: 0, unattributed_frames: 0});
   });
 
-  it('gives its frame counts producer unit authority without a display time unit', async () => {
+  it('retains authored frame count units through producer evidence capture', async () => {
     for (const column of ['total_frames', 'jank_frames']) {
-      expect(step.display.columns.find((candidate: any) => candidate.name === column).unit).toBeUndefined();
+      expect(step.display.columns.find((candidate: any) => candidate.name === column).unit).toBe('frames');
     }
     // Production path: SkillExecutor capture -> artifact registration inside the observed tool call.
     const columns = step.display.columns.map((column: any) => column.name);
