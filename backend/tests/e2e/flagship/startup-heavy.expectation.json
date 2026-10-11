@@ -29,7 +29,8 @@
       "id": "startup_type",
       "kind": "categorical",
       "columns": [
-        "startup_type"
+        "startup_type",
+        "original_type"
       ],
       "verification": "reference_only",
       "oracle": {

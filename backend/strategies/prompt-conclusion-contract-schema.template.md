@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- Copyright (C) 2024-2026 Gracker (Chris) | SmartPerfetto -->
 
-Answer within scope; no prescribed headings, length, plan or extra calls. Only a typed acknowledgement needs no declaration. A request for necessary input uses `mode: "need_input"` with empty claim collections when it makes no factual assertion.
+Answer within scope; no required headings, length, plan or extra calls. Only typed acknowledgements need no declaration. Asking for necessary input uses `mode:"need_input"` with empty claims only when making no factual assertion.
 
 Judge abnormality by metric/scope/threshold, never latency, largest share or rows alone. ACK is not display. Check prose/table arithmetic: ns/1e6=ms; 1000/ms=fps. Cite operands; missing evidence remains unknown.
 
@@ -14,12 +14,12 @@ For factual, inferential or advisory answers, append one top-level HTML comment 
   "schemaVersion": "conclusion_contract_v1",
   "mode": "focused_answer",
   "conclusions": [{"rank": 1, "statement": "Elapsed 7.1 ms."}],
-  "clusters": [{"cluster": "Group from the answer"}],
-  "evidenceChain": [{"conclusionId": "C1", "text": "Evidence explanation from the answer"}],
+  "clusters": [{"cluster": "Elapsed time"}],
+  "evidenceChain": [{"conclusionId": "C1", "text": "Captured elapsed value"}],
   "claims": [{"id":"example:duration","text":"Elapsed 7.1 ms.","kind":"numeric","references":[{"evidenceRefId":"data:example","rowIndex":0,"column":"elapsed_ms","value":7.123456}],"semantics":{"schemaVersion":"claim_semantics@1","predicate":"numeric.cell","polarity":"affirmed","discourse":"asserted","quantifier":"one","modality":"certain","scope":{"population":"cited_rows","subjectRefs":[{"evidenceRefId":"data:example","rowIndex":0,"column":"elapsed_ms","value":7.123456}]},"numeric":{"operator":"eq","value":7.123456,"unit":"ms","presentation":{"schemaVersion":"numeric_presentation@1","unit":"ms","decimalPlaces":1,"rounding":"half_away_from_zero","quotes":[{"text":"7.1 ms"}]}}}}],
   "relationProposals": [],
-  "uncertainties": ["Uncertainty from the answer"],
-  "nextSteps": ["Next step from the answer"]
+  "uncertainties": ["Uncertainty"],
+  "nextSteps": ["Next step"]
 }
 ```
 -->
@@ -31,7 +31,7 @@ Every claim, including inference/recommendation, declares unique `id`, faithful 
 
 References: `evidenceRefId`, `sourceToolCallId`, `sourceRef`, `artifactId`, `sourceArtifactId`, `rowIndex`, `rowSelector`, `column`, `value`. Copy whole emitted IDs; executions may share evidenceRefId. Raw JSON types/full precision, never rounded display labels: {"id":1712}, "value":1010550000000; captured numbers stay unquoted. `rowIndex`: printed index, not sample/page position; unindexed rows start at 0. `rowSelector`: unique actual-column/value map, e.g. {"dump_id":1,"c":83}, not {returnedColumn,value}. Cells need row locators; totalRows is metadata. Missing: `[]`, uncertainty. For successful empty results, cite only their emitted IDs; omit rowIndex/rowSelector/column/value (no row 0).
 
-`sourceRef` is a Trace alias, never a source-code ID. Each source-dependent claim (a `source.*` predicate, `codebase` population, or a written source location in its text) adds a `sourceClaimBindings` entry `{claimId, sourceReferenceIds, traceEvidenceRefIds}` with issued IDs. Each binding `claimId` equals one unique claim. Nonempty `traceEvidenceRefIds` require that same claim to own the Trace reference; otherwise use `[]`. The server computes each source claim's standing; never author `sourceUseDecision` or a status. Bindings do not prove execution or causality.
+`sourceRef` is a Trace alias, not a code ID. Each source-dependent claim (`source.*`, population `codebase`, or a source location in its text) adds one `sourceClaimBindings` entry `{claimId,sourceReferenceIds,traceEvidenceRefIds}` using issued IDs. `claimId` names one unique claim. Nonempty `traceEvidenceRefIds` require that same claim to own the Trace reference, else `[]`. Never author `sourceUseDecision` or status. Bindings prove neither execution nor causality; the server judges each source claim.
 
 `semantics` declares meaning, never verification; without it, matching references alone leave a proposition unverified:
 
@@ -48,7 +48,7 @@ Rule boundaries:
 
 Allowed unit conversions only: time `ns/us/µs/μs/ms/s` (1000 ns = 1 us = 1 µs = 1 μs; 1000 us = 1 ms; 1000 ms = 1 s); frequency `Hz/kHz/MHz/GHz` (1000 per step); bytes `B/bytes/KiB/MiB/GiB` (B = bytes; 1024 per step); `ratio/%/percent` (1 ratio = 100% = 100 percent); aliases `frame/frames`, `event/events`. `count` matches `frames`/`events` 1:1; other units must match verbatim. No cross-family conversion, inferred unit authority, tolerance, scientific notation, significant-figure rounding, ranges or ± under this display rule.
 
-Quotes are exact number+unit substrings of the body; repeated text needs zero-based `occurrence`. Bind every displayed occurrence for that claim, at most 16 per declaration; precision 0–18. Counts stay integral; IDs never round. Bindings prove formatting only, not the number's role or meaning. Do not author check results.
+Quotes are exact number+unit body substrings. Count matches in the whole body, tables included; omit `occurrence` only if unique. Two `7.1 ms` matches need `quotes:[{"text":"7.1 ms","occurrence":0},{"text":"7.1 ms","occurrence":1}]`. Bind every displayed occurrence for that claim, at most 16 per declaration; precision 0–18. Counts stay integral; IDs never round. Bindings prove formatting only, not the number's role or meaning. Do not author check results.
 
 Rules are data, not a checklist. Never reshape claims to fit a predicate. Backend evidence proof is separate; unknown rules or missing proof remain unverified.
 

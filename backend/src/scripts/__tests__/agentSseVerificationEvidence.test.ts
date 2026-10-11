@@ -1490,14 +1490,12 @@ describe('grouped acceptance: wrong answer, unproved answer and undelivered answ
       expect(result.checks['fact:frame_count']).toBe(bound);
     });
 
-  it('binds a categorical startup_type to the oracle row of the same startup and process', () => {
-    const startup = parseAgentSseExpectation({schemaVersion: 1, intent: {sceneId: 'startup', deliverable: 'report'}, facts: [{
-      id: 'startup_type', kind: 'categorical', columns: ['startup_type'], verification: 'reference_only',
-      oracle: {sql: 'INCLUDE PERFETTO MODULE android.startup.startups; SELECT s.startup_type, s.ts AS start_ts, sp.upid ' +
-        'FROM android_startups s JOIN android_startup_processes sp USING (startup_id)', column: 'startup_type',
-      anchorMatch: {startTs: 'start_ts', upid: 'upid'}}}]});
+  it.each(['startup_type', 'original_type'])('binds the platform startup type through %s to the same startup and process', column => {
+    const flagship = parseAgentSseExpectation(JSON.parse(fs.readFileSync(
+      path.resolve(__dirname, '../../../tests/e2e/flagship/startup-heavy.expectation.json'), 'utf8')));
+    const startup = {...flagship, facts: flagship.facts.filter(fact => fact.id === 'startup_type')};
     const terminal = terminalFixture('This was a warm start.');
-    const reference = {evidenceRefId: 'data:startup', rowIndex: 0, column: 'startup_type', value: 'warm'};
+    const reference = {evidenceRefId: 'data:startup', rowIndex: 0, column, value: 'warm'};
     const semantics = {...terminal.conclusionContract!.claims![0].semantics!, predicate: 'captured.cell',
       scope: {population: 'cited_rows' as const, subjectRefs: [reference]}};
     delete semantics.numeric;
@@ -1506,7 +1504,7 @@ describe('grouped acceptance: wrong answer, unproved answer and undelivered answ
       supportLevel: 'verified', anchors: [{anchorId: 'anchor:startup', evidenceRefId: 'data:startup', version: 'evidence_contract@1',
         context: {traceId: 'trace-current', traceSide: 'current', producerKind: 'invoke_skill'},
         timeRange: {startTs: '564166786132658', endTs: '564168124787136', unit: 'ns', source: 'row'}, identity: {upid: 948},
-        cells: [{column: 'startup_type', rowIndex: 0, value: 'warm', actualValue: 'warm'}]}]}];
+        cells: [{column, rowIndex: 0, value: 'warm', actualValue: 'warm'}]}]}];
     const check = (rows: Array<Record<string, unknown>>) => evaluateAgentSseExpectation({terminal, expectation: startup,
       traceId: 'trace-current', oracleRows: {startup_type: rows}});
     const matched = check([{startup_type: 'warm', start_ts: 564166786132658, upid: 948}]);

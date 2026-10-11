@@ -148,6 +148,10 @@ requirement. The record's origin distinguishes current acquisition from reused
 evidence: do not describe reused records as newly queried. A missing record or
 unknown origin is not proof of an executed check. No tool names, titles, plan
 completion or the answer's self-description establish acquisition.
+Copy only `recordId` values from `investigationEvidence.records`; claim IDs,
+evidenceRefIds, artifactIds, captureIds, spanIds and metricIds are different
+namespaces. When no supplied record addresses a requirement, use an empty
+`evidenceRecordIds` array; never manufacture an ID to represent missing evidence.
 
 `evidenceStatus` describes the answer's evidence claim: observed, insufficient,
 not_checked, failed, not_applicable or unknown. Observed requires scope-matched

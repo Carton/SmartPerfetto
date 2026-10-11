@@ -585,6 +585,10 @@ OPENAI_API_KEY=... npm run verify:e2e:deepseek-flagship:strict   # complete acce
 Their expectations live in `backend/tests/e2e/flagship/*.expectation.json`
 (passed as `--expectation-json @<path>`, never inline in the wrapper); facts
 compare against independent trace oracles, `startup_type` included.
+The startup-type oracle checks the platform's original classification. A
+reclassifying Skill retains it as `original_type`; that explicit alias must
+still match the oracle's value, startup time and process, not the Skill's
+corrected category.
 The verifier separates three questions, so a report never reads "wrong" when
 it means "unproved":
 
