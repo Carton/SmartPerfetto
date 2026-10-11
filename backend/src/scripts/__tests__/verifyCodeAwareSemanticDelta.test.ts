@@ -791,7 +791,7 @@ describe('real-provider task fact configuration', () => {
     expect(wrapper.suites.startup.args).not.toContain('--require-text');
     expect(wrapper.suites.startup.args).not.toContain('--forbid-text');
     const expectation = parseAgentSseArgs(wrapper.suites.startup.args).expectation;
-    expect(expectation?.facts.find(fact => fact.id === 'startup_type')?.verification).toBe('reference_only');
+    expect(expectation?.facts.find(fact => fact.id === 'startup_type')?.verification).toBe('proved');
   });
 
   it('reads both flagship expectations from files and judges startup_type against android_startups, not a literal', () => {
