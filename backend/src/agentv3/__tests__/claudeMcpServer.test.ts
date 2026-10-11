@@ -816,16 +816,39 @@ describe('createClaudeMcpServer', () => {
       expect(definition.exposure).toBe('internal');
       expect(definition.evidenceEffect).toBe('read_existing');
       expect(definition.shared.description.length).toBeLessThanOrEqual(1000);
+      expect(definition.shared.description).toBe(requireToolDescription('prompt-draft-declaration-diagnostics-tool-description'));
+      expect(definition.shared.description).not.toContain('Report labels');
       expect(definition.shared.description).toContain('coverageNotChecked');
       expect(definition.shared.description).toContain('never final verification');
       const before = JSON.stringify(artifactStore.serialize());
       const result = await definition.shared.handler({body: 'Draft', declarationJson: '{}'}, {});
       expect(JSON.parse((result.content[0] as {text: string}).text)).toMatchObject({diagnosticOnly: true, coverageNotChecked: true,
-        finalCertification: false, reason: 'invalid_declaration'});
+        finalCertification: false, success: false, reason: 'invalid_declaration',
+        diagnosticGuidance: requireToolDescription('prompt-draft-declaration-diagnostics-feedback')});
       expect(mockTpService.query).not.toHaveBeenCalled();
       expect(mockSkillExecutor.execute).not.toHaveBeenCalled();
       expect(emittedUpdates).toEqual([]);
       expect(JSON.stringify(artifactStore.serialize())).toBe(before);
+    });
+    it('returns bounded fixed draft guidance after processing a valid declaration, without certifying it', async () => {
+      const {ArtifactStore: RealArtifactStore} = jest.requireActual('../artifactStore') as typeof import('../artifactStore');
+      const server = createTestServer({runId: 'diagnostic-run', sessionId: 'diagnostic-session',
+        allowNewEvidence: false, artifactStore: new RealArtifactStore()});
+      const definition = server.toolDefinitions.find(item => item.name === 'check_conclusion_draft')!;
+      const declarationJson = JSON.stringify({schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
+        conclusions: [], clusters: [], evidenceChain: [], claims: [], uncertainties: [], nextSteps: []});
+      const result = await definition.shared.handler({body: 'No finding established.', declarationJson}, {});
+      const feedback = JSON.parse((result.content[0] as {text: string}).text);
+      expect(feedback).toMatchObject({state: 'diagnosed', success: true, diagnosticOnly: true,
+        coverageNotChecked: true, finalCertification: false, evaluatedClaimCount: 0,
+        diagnosticGuidance: requireToolDescription('prompt-draft-declaration-diagnostics-feedback')});
+      expect(feedback.diagnosticGuidance.length).toBeLessThanOrEqual(1000);
+      expect(feedback.diagnosticGuidance).toContain('declarationJson is JSON text, not a nested object');
+      expect(feedback.diagnosticGuidance).toContain('retaining every claim in the final declaration');
+      expect(feedback.diagnosticGuidance).not.toContain('No finding established.');
+      expect(server.mockTpService.query).not.toHaveBeenCalled();
+      expect(server.mockSkillExecutor.execute).not.toHaveBeenCalled();
+      expect(server.emittedUpdates).toEqual([]);
     });
     it.each([
       {artifactStore: null, reason: 'evidence_store_missing'},
@@ -838,7 +861,9 @@ describe('createClaudeMcpServer', () => {
       const server = createTestServer({runId: 'diagnostic-run', sessionId: 'diagnostic-session', ...options});
       const definition = server.toolDefinitions.find(item => item.name === 'check_conclusion_draft')!;
       const result = await definition.shared.handler({body: 'Draft', declarationJson: '{}'}, {});
-      expect(JSON.parse((result.content[0] as {text: string}).text)).toMatchObject({state: 'unavailable', reason, finalCertification: false});
+      const feedback = JSON.parse((result.content[0] as {text: string}).text);
+      expect(feedback).toMatchObject({state: 'unavailable', reason, finalCertification: false});
+      expect(feedback).not.toHaveProperty('diagnosticGuidance');
       expect(server.mockTpService.query).not.toHaveBeenCalled();
     });
     it('cannot read draft evidence after the lease closes or authorization is revoked', async () => {

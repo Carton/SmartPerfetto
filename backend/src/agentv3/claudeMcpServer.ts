@@ -7695,7 +7695,10 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
           options.runAuthorization?.assertCurrentInTurn();
           if (options.canInvokeTool?.() === false) throw new Error('draft_read_context_closed');
         }});
-      return createRuntimeToolResult({...diagnostic, success: diagnostic.state === 'diagnosed'},
+      return createRuntimeToolResult({...diagnostic, success: diagnostic.state === 'diagnosed',
+        ...(diagnostic.state !== 'unavailable' ? {
+          diagnosticGuidance: requireToolDescription('prompt-draft-declaration-diagnostics-feedback'),
+        } : {})},
         {isError: diagnostic.state !== 'diagnosed'});
     }, {annotations: {readOnlyHint: true}},
   );

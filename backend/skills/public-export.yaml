@@ -1742,6 +1742,9 @@ strategies:
   backend/strategies/prompt-draft-declaration-diagnostics-tool-description.template.md:
     disposition: product-only
     reason: SmartPerfetto draft diagnostic MCP tool over authorized product evidence captures
+  backend/strategies/prompt-draft-declaration-diagnostics-feedback.template.md:
+    disposition: product-only
+    reason: SmartPerfetto draft diagnostic result guidance over authorized product evidence captures
   backend/strategies/prompt-invoke-skill-tool-description.template.md:
     disposition: product-only
     reason: SmartPerfetto MCP artifact projection and exact process handoff guidance
