@@ -216,7 +216,7 @@ describe('typed prompt with real strategy assets', () => {
     expect(proof.claimResults[0].deterministicProof.status).not.toBe('proved');
   });
 
-  it('binds the actual numeric declaration example to captured evidence and rejects a different value', () => {
+  it('binds both actual declaration examples only to issued captured facts and rejects changed or wrongly typed values', () => {
     const template = stripTemplateComments(loadPromptTemplate('prompt-conclusion-contract-schema')!);
     expect(template).toContain('References retain exact raw cell values and native row IDs');
     expect(template).toContain('an explicitly marked fixed-decimal approximation');
@@ -241,25 +241,35 @@ describe('typed prompt with real strategy assets', () => {
     const parsed = parseConclusionContractSidecar(`${CONCLUSION_CONTRACT_SIDECAR_MARKER}\n\`\`\`json\n${JSON.stringify(example)}\n\`\`\`\n-->`);
     expect(parsed.status).toBe('valid');
     expect(parsed.bindingEligibility).toBe('eligible');
-    const claim = parsed.contract!.claims![0];
-    const ref = claim.references[0];
-    expect(claim.semantics!.scope.subjectRefs).toEqual([ref]);
-    const anchor: EvidenceAnchorV1 = {
-      version: 'evidence_contract@1', anchorId: 'anchor:template-example', evidenceRefId: ref.evidenceRefId!,
-      context: {traceId: 'trace-template-example', traceSide: 'current', producerKind: 'invoke_skill'},
-      cells: [{column: ref.column!, rowIndex: ref.rowIndex!, value: ref.value}],
-    };
-    bindCapturedAnchorFacts(anchor, captureEvidenceTable({columns: [ref.column!], rows: [{[ref.column!]: 7.123456}]}, {
-      [ref.column!]: {unit: 'ms', origin: {kind: 'skill_literal', skillId: 'example', stepId: 'metric',
-        definitionFingerprint: 'template-example-capture'}},
-    }), 0);
-    const support = {claimId: claim.id!, kind: claim.kind!, text: claim.text, semantics: claim.semantics,
-      anchors: [anchor], bindingEligibility: parsed.bindingEligibility, supportLevel: 'partial' as const};
-    expect(runDeterministicClaimVerifier({claimSupport: [support]}).claimResults[0].deterministicProof.status).toBe('proved');
-    expect(runDeterministicClaimVerifier({claimSupport: [{...support, anchors: []}]}).passed).toBe(false);
-    expect(runDeterministicClaimVerifier({claimSupport: [{...support, semantics: {...claim.semantics!,
-      numeric: {...claim.semantics!.numeric!, value: 99}},
-    }]}).claimResults[0].deterministicProof.status).toBe('rejected');
+    const claims = parsed.contract!.claims!;
+    expect(claims.map(claim => claim.semantics?.predicate)).toEqual(['numeric.cell', 'captured.cell']);
+    for (const claim of claims) {
+      const ref = claim.references[0];
+      expect(claim.semantics!.scope.subjectRefs).toEqual([ref]);
+      const anchor: EvidenceAnchorV1 = {
+        version: 'evidence_contract@1', anchorId: `anchor:template-${claim.id}`, evidenceRefId: ref.evidenceRefId!,
+        context: {traceId: 'trace-template-example', traceSide: 'current', producerKind: 'invoke_skill'},
+        cells: [{column: ref.column!, rowIndex: ref.rowIndex!, value: ref.value}],
+      };
+      const support = {claimId: claim.id!, kind: claim.kind!, text: claim.text, semantics: claim.semantics,
+        anchors: [anchor], bindingEligibility: parsed.bindingEligibility, supportLevel: 'partial' as const};
+      const verify = (input = support) => runDeterministicClaimVerifier({claimSupport: [input]}).claimResults[0].deterministicProof;
+      expect(verify().status).not.toBe('proved'); // Model-owned lookalike cells alone are not capture facts.
+      bindCapturedAnchorFacts(anchor, captureEvidenceTable({columns: [ref.column!], rows: [{[ref.column!]: ref.value}]}, {
+        ...(claim.kind === 'numeric' ? {[ref.column!]: {unit: 'ms', origin: {kind: 'skill_literal' as const,
+          skillId: 'example', stepId: 'metric', definitionFingerprint: 'template-example-capture'}}} : {}),
+      }), 0);
+      expect(verify().status).toBe('proved');
+      expect(verify({...support, anchors: []}).status).not.toBe('proved');
+      expect(verify({...support, semantics: {...claim.semantics!, scope: {population: 'cited_rows'}}}).status).not.toBe('proved');
+      if (claim.kind === 'numeric') {
+        expect(verify({...support, semantics: {...claim.semantics!,
+          numeric: {...claim.semantics!.numeric!, value: 'not-a-number'}}}).status).not.toBe('proved');
+        expect(verify({...support, semantics: {...claim.semantics!,
+          numeric: {...claim.semantics!.numeric!, value: 99}}}).status).toBe('rejected');
+      } else expect(verify({...support, semantics: {...claim.semantics!, scope: {...claim.semantics!.scope,
+        subjectRefs: [{...ref, value: 1}]}}}).status).not.toBe('proved');
+    }
   });
 
   it('keeps startup system conclusions scoped to each covered dimension', () => {
@@ -354,16 +364,18 @@ describe('typed prompt with real strategy assets', () => {
       expect(parsed.contract?.evidenceChain).toEqual([{conclusionId: expect.any(String), text: expect.any(String)}]);
       expect(parsed.contract?.uncertainties).toEqual([expect.any(String)]);
       expect(parsed.contract?.nextSteps).toEqual([expect.any(String)]);
-      expect(parsed.contract?.claims).toHaveLength(1);
+      expect(parsed.contract?.claims).toHaveLength(2);
       expect(parsed.contract?.claims?.[0]).toMatchObject({id: expect.any(String), text: expect.any(String), kind: 'numeric',
         semantics: {schemaVersion: 'claim_semantics@1', predicate: 'numeric.cell', polarity: 'affirmed',
           discourse: 'asserted', quantifier: 'one', modality: 'certain', scope: {population: 'cited_rows'}}});
-      const sampleClaim = parsed.contract!.claims![0];
-      const sampleProof = runDeterministicClaimVerifier({claimSupport: [{claimId: sampleClaim.id!,
+      const samples = parsed.contract!.claims!;
+      expect(samples[1]).toMatchObject({kind: 'categorical', semantics: {predicate: 'captured.cell'}});
+      for (const sample of samples) expect(sample.semantics?.scope.subjectRefs).toEqual(sample.references);
+      const sampleProof = runDeterministicClaimVerifier({claimSupport: samples.map(sampleClaim => ({claimId: sampleClaim.id!,
         kind: sampleClaim.kind!, text: sampleClaim.text, semantics: sampleClaim.semantics,
-        bindingEligibility: 'eligible', anchors: [], supportLevel: 'partial'}]});
+        bindingEligibility: 'eligible', anchors: [], supportLevel: 'partial'}))});
       expect(sampleProof.passed).toBe(false);
-      expect(sampleProof.claimResults[0].deterministicProof.status).not.toBe('proved');
+      for (const sample of sampleProof.claimResults) expect(sample.deterministicProof.status).not.toBe('proved');
       const jsonBlocks = [...declaration.content.matchAll(/^```json\n([\s\S]*?)\n```$/gm)]
         .map(match => JSON.parse(match[1]));
       expect(jsonBlocks.filter(Array.isArray)).toEqual([SUPPORTED_DETERMINISTIC_CLAIM_RULES]);
