@@ -58,6 +58,42 @@ describe('draft declaration diagnostics', () => {
       diagnostics: [{finiteReason: 'numeric_operator_rejected', presentationReason: 'proposition_not_proved'}]});
     expect(f.contract.claims[0].semantics.numeric.value).toBe(9);
   });
+  it('prioritizes an unproved valid candidate after more than a feedback budget of proved categorical claims', async () => {
+    const f = fixture();
+    const ref = {...f.contract.claims[0].references[0], column: 'secret', value: 'never return retained private cell'};
+    const semantics = {...f.contract.claims[0].semantics, predicate: 'captured.cell', numeric: undefined,
+      scope: {population: 'cited_rows', subjectRefs: [ref]}};
+    // These full IDs differ even though their projected prefixes collide.
+    const idPrefix = 'claim-'.padEnd(128, 'x');
+    f.contract.claims = Array.from({length: MAX_CLAIM_DIAGNOSTICS + 1}, (_, index) => ({
+      id: `${idPrefix}${index}`, text: 'The captured category is retained.', kind: 'categorical',
+      references: [ref], semantics,
+    }));
+    f.contract.claims.push({id: `${idPrefix}candidate`, text: 'All captured categories agree.', kind: 'categorical',
+      references: [ref], semantics: {...semantics, quantifier: 'all'}});
+    const declarationJson = JSON.stringify(f.contract);
+    const body = 'The captured category is retained. All captured categories agree.';
+    const beforeStore = JSON.stringify(f.store.serialize());
+    const read = jest.fn(f.input.readView.resolveReferences);
+    const input = {...f.input, body, declarationJson, readView: {...f.input.readView, resolveReferences: read}};
+    const beforeInput = JSON.stringify({...input, readView: undefined});
+    const result = await diagnoseConclusionDraft(input);
+    expect(result).toMatchObject({state: 'diagnosed', evaluatedClaimCount: MAX_CLAIM_DIAGNOSTICS + 2,
+      omittedDiagnosticCount: 2, schemaDiagnostics: [], coverageNotChecked: true, finalCertification: false});
+    if (!('diagnostics' in result)) throw new Error('expected diagnosed feedback');
+    expect(result.diagnostics).toHaveLength(MAX_CLAIM_DIAGNOSTICS);
+    expect(result.diagnostics[0]).toEqual({claimOrdinal: MAX_CLAIM_DIAGNOSTICS + 2, claimId: idPrefix,
+      finiteReason: 'proposition_quantifier_not_supported', referenceReasons: [], referenceDiagnostics: [], producerUnits: []});
+    expect(result.diagnostics.slice(1).every(diagnostic => diagnostic.finiteReason === 'captured_cell_value_proved')).toBe(true);
+    expect(result.diagnostics.slice(1).map(diagnostic => diagnostic.claimOrdinal))
+      .toEqual(Array.from({length: MAX_CLAIM_DIAGNOSTICS - 1}, (_, index) => index + 1));
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0][0]).toHaveLength(1);
+    expect(JSON.stringify(f.contract)).toBe(declarationJson);
+    expect(JSON.stringify(f.store.serialize())).toBe(beforeStore);
+    expect(JSON.stringify(result)).not.toMatch(/needsAttention|never return retained private cell|invalid_claim/);
+    expect(JSON.stringify({...input, readView: undefined})).toBe(beforeInput);
+  });
   it('retains unknown producer units', async () => {
     expect(await diagnoseConclusionDraft(fixture({unit: false}).input)).toMatchObject({
       diagnostics: [{finiteReason: 'unit_authority_unknown', producerUnits: []}]});

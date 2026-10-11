@@ -130,20 +130,21 @@ export async function diagnoseConclusionDraft(input: DiagnosticInput) {
         ...(REFERENCE_FAILURE_CODES.has(resolution.reason) ? {reason: resolution.reason} : {}),
         ...(matchedFields.length ? {matchedFields} : {}), ...(conflictingFields.length ? {conflictingFields} : {})}];
     }));
-    return {claimOrdinal: index + 1, claimId: claim.claimId.slice(0, 128),
+    const diagnostic = {claimOrdinal: index + 1, claimId: claim.claimId.slice(0, 128),
       finiteReason: claim.deterministicProof?.reason ?? 'not_checked', referenceReasons, producerUnits,
       referenceDiagnostics: referenceDiagnostics.slice(0, MAX_CLAIM_DIAGNOSTICS),
       ...(referenceDiagnostics.length > MAX_CLAIM_DIAGNOSTICS
         ? {omittedReferenceDiagnosticCount: referenceDiagnostics.length - MAX_CLAIM_DIAGNOSTICS} : {}),
       ...(presentation ? {presentationReason: presentation.reason, quoteOccurrences} : {})};
+    return {diagnostic, needsAttention: claim.deterministicProof?.status !== 'proved' ||
+      referenceReasons.length > 0 || referenceDiagnostics.length > 0 ||
+      (presentation !== undefined && presentation.reason !== 'display_matches')};
   });
-  // Errors first, without dropping or rewriting any declaration. This is bounded feedback, never coverage.
-  diagnostics.sort((left, right) => Number(right.referenceReasons.length > 0 || right.referenceDiagnostics.length > 0 ||
-    (right.presentationReason !== undefined && right.presentationReason !== 'display_matches')) -
-    Number(left.referenceReasons.length > 0 || left.referenceDiagnostics.length > 0 ||
-      (left.presentationReason !== undefined && left.presentationReason !== 'display_matches')));
+  // Unproved candidates need feedback too; prioritizing them never invalidates
+  // or rewrites a declaration. This is bounded feedback, never coverage.
+  diagnostics.sort((left, right) => Number(right.needsAttention) - Number(left.needsAttention));
   return {...boundary, state: 'diagnosed' as const, schemaDiagnostics,
     evaluatedClaimCount: finite.claimVerificationResult.claimResults.length,
     omittedDiagnosticCount: Math.max(0, diagnostics.length - MAX_CLAIM_DIAGNOSTICS),
-    diagnostics: diagnostics.slice(0, MAX_CLAIM_DIAGNOSTICS)};
+    diagnostics: diagnostics.slice(0, MAX_CLAIM_DIAGNOSTICS).map(item => item.diagnostic)};
 }
