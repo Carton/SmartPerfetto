@@ -475,6 +475,14 @@ export function acceptNativeDeclarationCompletion(input: {
   const original = inspectCandidateProtocol(input.request.originalBody);
   if (original.status !== 'absent') return reject('original_not_absent', {original: original.status});
   let candidate = input.candidate;
+  // This reserved no-tool response transports the declaration as one complete
+  // JSON object. The server owns its sidecar frame; no substring extraction or
+  // completion of unfinished JSON is allowed. Older sidecars retain their path.
+  try {
+    const payload: unknown = JSON.parse(candidate.trim());
+    if (recordPayload(payload)) candidate = wrapConclusionContractSidecarPayload(JSON.stringify(payload));
+  } catch { /* A legacy sidecar must still pass the scanner and strict parser below. */ }
+  if (!nativeDeclarationCandidateFitsOutput(candidate, input.outputByteLimit)) return reject('output_limit');
   let repaired = inspectCandidateProtocol(candidate);
   if (repaired.sidecar.issues.some(issue => issue.code === 'invalid_framing')) {
     const payload = recoverNativeDeclarationPayload(candidate);

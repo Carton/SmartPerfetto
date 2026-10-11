@@ -392,7 +392,11 @@ Keep these boundaries intact:
   `subreason` `shape|operator|value|unit`). The completion supplies only the
   declaration: `acceptNativeDeclarationCompletion` returns the original body
   plus the completion's sidecar and discards any prose the completion adds, so
-  the delivered answer cannot change in a repair. A unique closed repair
+  the delivered answer cannot change in a repair. Reserved completion uses one
+  complete bare JSON object; the server generates its HTML sidecar frame,
+  then applies the same strict parser, preservation matrix and raw/frame/joined
+  output caps. It never extracts a substring or completes unfinished JSON.
+  A unique closed legacy repair
   segment with complete JSON may be re-framed deterministically, preserving
   decoded fields and values; it still passes the unchanged strict parser,
   output caps and preservation matrix. Duplicated, truncated or ordinary

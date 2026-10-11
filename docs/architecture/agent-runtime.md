@@ -338,12 +338,16 @@ witness、受信单位/字段语义或覆盖时保留候选/未知状态；
 
 Skill 的字面 `display.columns[].unit` 经过同一列类型/单位校验后，随定义指纹和实际 SQL
 哈希进入捕获；作者校验、运行清洗与 DataEnvelope 不得只保留时间单位。单位目录位于
-`utils/claimUnits.ts`，数值列支持其封闭数量维度，timestamp/duration 仍只接受时间单位。
+`utils/claimUnits.ts`，number 列支持其封闭数量维度；percentage/bytes 限相应维度，timestamp/duration 仅接受时间单位。
 帧率 `fps` 与 `frames/s` 等价，但与 Hz、帧数互不换算。显示格式、列名及模型声明不能
 提供单位权威。原生 SQL 仅在已固定的正式 schema、单关系只读语句及受支持表达式
 同时成立时签发数量单位：COUNT 为 count，duration 聚合、时间点差与明确时间缩放
 保留相应单位；规则指纹绑定实际 SQL、schema 和 processor epoch。表达式不签发
 原生行身份或 clock；未知关系、复杂查询与无单位字段仍保持未知。
+
+原生声明补全只传输一个完整 JSON 对象，正式 HTML sidecar 外壳由服务端生成。
+严格解析、原正文与有效 claim/proposal 保留矩阵、raw/frame/joined 输出上限继续执行；
+不完整 JSON、尾随文字和重复对象不能通过。旧完整 sidecar 的兼容路径保留。
 
 数值引用比较与正文显示精度保持分离。原始引用和 `numeric.cell` 命题仍做精确比较；
 `numeric.presentation` 的显式显示声明（`numeric_presentation@1`）绑定正文中的数字、

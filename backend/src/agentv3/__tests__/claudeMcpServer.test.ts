@@ -1718,6 +1718,9 @@ describe('createClaudeMcpServer', () => {
       // What raw SQL is for, and when a Skill comes first (B.2).
       expect(descriptionByName.get('execute_sql')).toContain('For what Skills and scene_evidence do not cover');
       expect(descriptionByName.get('invoke_skill')).toContain('Use it first for scene-level measurements');
+      expect(descriptionByName.get('invoke_skill')).toBe(requireToolDescription('prompt-invoke-skill-tool-description'));
+      expect(descriptionByName.get('invoke_skill')).toContain('required detail Skills');
+      expect(descriptionByName.get('invoke_skill')).toContain('columnUnits');
       expect(descriptionByName.get('invoke_skill')).toContain('`fetch_artifact` its tables instead of re-running it');
       const proposePatchDescription = descriptionByName.get('propose_patch') ?? '';
       expect(proposePatchDescription).toBe(requireToolDescription('prompt-propose-patch-tool-description'));

@@ -22,12 +22,15 @@ describe('authored display title translations', () => {
       {name: 'duration', type: 'duration', unit: 'frames'},
       {name: 'category', type: 'string', unit: 'count'},
       {name: 'unknown', type: 'number', unit: 'priority'},
+      {name: 'percentage_frames', type: 'percentage', unit: 'frames'},
+      {name: 'bytes_time', type: 'bytes', unit: 'ns'},
     ];
     const skill = baseSkill({steps: [{id: 'units', type: 'atomic', sql: 'SELECT values',
       display: {columns}} as any]});
     expect(validateSkillDisplayContract(skill).map(issue => issue.path)).toEqual([
       'steps[0].display.columns[5].unit', 'steps[0].display.columns[6].unit',
       'steps[0].display.columns[7].unit', 'steps[0].display.columns[8].unit',
+      'steps[0].display.columns[9].unit', 'steps[0].display.columns[10].unit',
     ]);
     const cleaned = sanitizeDisplayConfigForRuntime({columns} as any, {skillName: 'units'});
     expect(cleaned.config?.columns?.slice(0, 5)).toEqual(columns.slice(0, 5));

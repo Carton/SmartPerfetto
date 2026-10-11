@@ -217,7 +217,10 @@ export function isValidColumnUnit(type: unknown, unit: unknown): unit is string 
   if (typeof unit !== 'string') return false;
   if (type === undefined || type === 'timestamp' || type === 'duration')
     return VALID_COLUMN_UNITS.includes(unit as typeof VALID_COLUMN_UNITS[number]);
-  return ['number', 'percentage', 'bytes'].includes(String(type)) && claimUnitFor(unit) !== undefined;
+  const dimension = claimUnitFor(unit)?.dimension;
+  if (type === 'percentage') return dimension === 'ratio';
+  if (type === 'bytes') return dimension === 'bytes';
+  return type === 'number' && dimension !== undefined;
 }
 
 function normalizeDisplayLayer(layer: unknown): DisplayLayer {

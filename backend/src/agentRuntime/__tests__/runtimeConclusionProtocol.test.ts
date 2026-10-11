@@ -148,7 +148,7 @@ describe('runtime native declaration completion', () => {
       expect(inspectCandidateProtocol(malformed).sidecar.issues).toContainEqual({code: 'invalid_framing', path: '$'});
     }
     const prompt = buildNativeDeclarationCompletionPrompt({request, intent: intent('investigation'), outputLanguage: 'en'});
-    expect(prompt).toContain('conclusion-contract@1');
+    expect(prompt).toContain('one complete JSON object');
     expect(prompt).toContain(sample.observedIssue);
   });
 
@@ -279,6 +279,63 @@ describe('runtime native declaration completion', () => {
     const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: compact})!;
     expect(inspectCandidateProtocol(accepted).sidecar.rawPayload).toEqual(payload);
     expect(inspectCandidateProtocol(accepted).canonicalBody.trim()).toBe(body);
+  });
+
+  it.each(['missing', 'partial'] as const)('admits a complete bare JSON %s declaration through the unchanged sidecar parser', kind => {
+    const valid = claim('a', {text: 'Literal <data> --> 9007199254740993 ns.',
+      semantics: {...semantics, numeric: {operator: 'eq', value: '9007199254740993', unit: 'ns'}}});
+    const original = kind === 'missing' ? body : `${body}\n${contract([valid,
+      claim('b', {semantics: {...semantics, scope: {population: 'everywhere'}}})])}`;
+    const request = repair(original)!;
+    const corrected = contract([valid, claim('b')]);
+    const payload = inspectCandidateProtocol(corrected).sidecar.rawPayload;
+    const bareJson = JSON.stringify(payload);
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+      candidate: ` \n${bareJson}\n `})!;
+    const inspected = inspectCandidateProtocol(accepted);
+    expect(inspected.status).toBe('valid');
+    expect(inspected.canonicalBody.trim()).toBe(body);
+    expect(inspected.sidecar.rawPayload).toEqual(payload);
+    expect(accepted).not.toContain('Literal <data> -->');
+    // Bare JSON transport is scoped to this completion, never ordinary native admission.
+    expect(inspectCandidateProtocol(bareJson).sidecar.status).toBe('absent');
+  });
+
+  it.each(['truncated', 'trailing-prose', 'two-objects', 'array', 'fenced', 'root-invalid', 'changed-value', 'dropped-claim',
+    'duplicate-claim'] as const)('rejects unsafe bare JSON declaration transport: %s', variant => {
+    const preserved = claim('a', {semantics: {...semantics, numeric: {operator: 'eq', value: 2, unit: 'ns'}}});
+    const request = repair(`${body}\n${contract([preserved,
+      claim('b', {semantics: {...semantics, scope: {population: 'everywhere'}}})])}`)!;
+    const valid = JSON.stringify(inspectCandidateProtocol(contract([preserved, claim('b')])).sidecar.rawPayload);
+    const candidates = {
+      truncated: valid.slice(0, -1), 'trailing-prose': `${valid}\nDone.`, 'two-objects': `${valid}\n{}`,
+      array: `[${valid}]`, fenced: `\`\`\`json\n${valid}\n\`\`\``,
+      'root-invalid': valid.replace('"focused_answer"', '"broken"'),
+      'changed-value': JSON.stringify(inspectCandidateProtocol(contract([claim('a',
+        {semantics: {...semantics, numeric: {operator: 'eq', value: 3, unit: 'ns'}}}), claim('b')])).sidecar.rawPayload),
+      'dropped-claim': JSON.stringify(inspectCandidateProtocol(contract([claim('b')])).sidecar.rawPayload),
+      'duplicate-claim': JSON.stringify(inspectCandidateProtocol(contract([preserved, claim('b'), preserved])).sidecar.rawPayload),
+    };
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: candidates[variant]}))
+      .toBeUndefined();
+  });
+
+  it('checks bare JSON transport, server framing and joined body against the same output cap', () => {
+    const request = repair(`${body}\n${rejected}`)!;
+    const bareJson = JSON.stringify(inspectCandidateProtocol(contract([claim('a'), claim('b')])).sidecar.rawPayload);
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: bareJson})!;
+    for (const cap of [Buffer.byteLength(bareJson) - 1, Buffer.byteLength(bareJson), Buffer.byteLength(accepted) - 1]) {
+      expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: bareJson,
+        outputByteLimit: cap})).toBeUndefined();
+    }
+  });
+
+  it.each(['en', 'zh-CN'] as const)('requests bare JSON transport rather than a model-owned frame in %s', outputLanguage => {
+    const prompt = buildNativeDeclarationCompletionPrompt({request: repair(`${body}\n${rejected}`)!,
+      intent: intent('investigation'), outputLanguage});
+    expect(prompt).toContain(outputLanguage === 'en' ? 'one complete JSON object' : '一个完整 JSON 对象');
+    expect(prompt).toContain(outputLanguage === 'en' ? 'server supplies the final HTML sidecar frame' : '外壳由服务端生成');
+    expect(prompt).toContain(outputLanguage === 'en' ? 'without HTML comments, Markdown fences' : '不带 HTML 注释、Markdown fence');
   });
 
   it('delivers the original body with a repaired declaration that keeps every declared claim', () => {
@@ -661,15 +718,22 @@ describe('runtime native declaration completion', () => {
       // Fixing the claim while keeping the valid proposal in place is accepted.
       const fixed = base([proposal], [claim('a'), claim('b')]);
       expect(accept(request, fixed)).toBe(`${body}\n\n${fixed}`);
+      const bare = JSON.stringify(inspectCandidateProtocol(fixed).sidecar.rawPayload);
+      expect(inspectCandidateProtocol(accept(request, bare)!).sidecar.rawPayload)
+        .toEqual(inspectCandidateProtocol(fixed).sidecar.rawPayload);
       const framed = accept(request, fixed.replace('```json', '```JSON '))!;
       expect(inspectCandidateProtocol(framed).sidecar.rawPayload).toEqual(inspectCandidateProtocol(fixed).sidecar.rawPayload);
       // Changing the originally-valid proposal's semantics is rejected.
       expect(rejectionReason(base([{...proposal, kind: 'wakeup'}], [claim('a'), claim('b')]), original))
         .toBe('valid_proposal_changed');
+      expect(rejectionReason(JSON.stringify(inspectCandidateProtocol(base([{...proposal, kind: 'wakeup'}],
+        [claim('a'), claim('b')])).sidecar.rawPayload), original)).toBe('valid_proposal_changed');
       expect(rejectionReason(base([{...proposal, kind: 'wakeup'}], [claim('a'), claim('b')])
         .replace('```json', '```JSON '), original)).toBe('valid_proposal_changed');
       // Dropping the proposal (fewer positions) is rejected.
       expect(rejectionReason(base([], [claim('a'), claim('b')]), original)).toBe('relation_positions_changed');
+      expect(rejectionReason(JSON.stringify(inspectCandidateProtocol(base([], [claim('a'), claim('b')]))
+        .sidecar.rawPayload), original)).toBe('relation_positions_changed');
       expect(rejectionReason(base([], [claim('a'), claim('b')]).replace('```json', '```JSON '), original))
         .toBe('relation_positions_changed');
     });
