@@ -551,7 +551,8 @@ function nativeOracleAnchorMatches(input: {
   const rows = proof?.deterministicProof?.nativeRows;
   if (rows === undefined || Array.isArray(rows) && rows.length === 0) return undefined;
   if (!Array.isArray(rows)) return false;
-  if (proof?.status !== 'verified' || proof.deterministicProof?.kind !== 'numeric_cell' ||
+  const proofKind = input.fact.kind === 'numeric' ? 'numeric_cell' : 'captured_cell';
+  if (proof?.status !== 'verified' || proof.deterministicProof?.kind !== proofKind ||
     proof.deterministicProof.status !== 'proved' || proof.propositionCoverage?.status !== 'complete' ||
     proof.propositionCoverage.uncovered.length || rows.length !== 1 || !schema || schema.traceId !== input.traceId ||
     schema.relation !== tuple.relation || schema.idColumn !== tuple.idColumn) return false;
@@ -982,6 +983,7 @@ export function evaluateAgentSseExpectation(input: {
   for (const fact of expectation.facts) {
     const traceSide = fact.oracle?.traceSide ?? 'current';
     const factTraceId = traceSide === 'reference' ? input.referenceTraceId : traceId;
+    const proofKind = fact.kind === 'numeric' ? 'numeric_cell' : 'captured_cell';
     // `requireProof` adds today's finite-proof conditions to the value binding.
     const matchTier = (requireProof: boolean) => {
       const matchedAnchorIds = new Set<string>();
@@ -994,7 +996,7 @@ export function evaluateAgentSseExpectation(input: {
         if (support?.length !== 1 || support[0].text !== claim.text || support[0].kind !== claim.kind ||
             !isDeepStrictEqual(support[0].semantics, semantics)) return false;
         if (requireProof && (claimProof?.status !== 'verified' || claimProof.deterministicProof?.status !== 'proved' ||
-            claimProof.deterministicProof.kind !== 'numeric_cell' ||
+            claimProof.deterministicProof.kind !== proofKind ||
             claimProof.propositionCoverage?.status !== 'complete' || claimProof.propositionCoverage.uncovered.length > 0)) return false;
         return support[0].anchors.some(anchor => {
           if (anchor.missing || !factTraceId || anchor.context.traceId !== factTraceId || anchor.context.traceSide !== traceSide) return false;
@@ -1004,7 +1006,7 @@ export function evaluateAgentSseExpectation(input: {
             if (!(fact.producer ? cellProducerMatches(cell.producer, fact.producer) : fact.columns.includes(cell.column)) ||
                 cell.actualValue === undefined || cell.actualValue === null ||
                 (cell.value !== undefined && cell.value !== cell.actualValue)) return false;
-            const originalRefs = fact.kind === 'numeric' ? semantics.scope.subjectRefs ?? [] : claim.references;
+            const originalRefs = requireProof || fact.kind === 'numeric' ? semantics.scope.subjectRefs ?? [] : claim.references;
             if (!originalRefs.some(ref => {
               const identifiers = [[ref.evidenceRefId, anchor.evidenceRefId], [ref.artifactId, anchor.context.artifactId],
                 [ref.sourceArtifactId, anchor.context.artifactId], [ref.sourceToolCallId, anchor.context.sourceToolCallId],
@@ -1017,6 +1019,7 @@ export function evaluateAgentSseExpectation(input: {
             if (requireProof && !claimProof?.referenceCells?.some(ref => ref.anchorId === anchor.anchorId &&
               ref.column === cell.column && ref.status === 'matched')) return false;
             if (fact.kind === 'numeric' && (semantics.predicate !== 'numeric.cell' || semantics.numeric?.operator !== 'eq')) return false;
+            if (requireProof && fact.kind !== 'numeric' && semantics.predicate !== 'captured.cell') return false;
             const values = fact.oracle ? input.oracleRows?.[fact.id] ?? [] : [{value: fact.value}];
             return values.some(row => {
               const expected = fact.oracle ? row[fact.oracle.column] : row.value;
@@ -1049,7 +1052,7 @@ export function evaluateAgentSseExpectation(input: {
       return {matchedClaimIds: matchedClaims.flatMap(claim => typeof claim.id === 'string' ? [claim.id] : []),
         matchedAnchorIds: [...matchedAnchorIds]};
     };
-    // A reference-only fact has no finite proof to reach; it is measured at the value tier only.
+    // A reference-only expectation deliberately measures only the value tier.
     const proved = fact.verification === 'proved' ? matchTier(true) : undefined;
     const valueMatch = proved?.matchedClaimIds.length ? undefined : matchTier(false);
     const tier: AgentSseFactTier = proved?.matchedClaimIds.length ? 'proved' : valueMatch?.matchedClaimIds.length ? 'value' : 'none';

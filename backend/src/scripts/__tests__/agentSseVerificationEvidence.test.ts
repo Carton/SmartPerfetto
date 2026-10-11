@@ -1490,21 +1490,33 @@ describe('grouped acceptance: wrong answer, unproved answer and undelivered answ
       expect(result.checks['fact:frame_count']).toBe(bound);
     });
 
-  it.each(['startup_type', 'original_type'])('binds the platform startup type through %s to the same startup and process', column => {
+  function startupTypeFixture(column: string) {
     const flagship = parseAgentSseExpectation(JSON.parse(fs.readFileSync(
       path.resolve(__dirname, '../../../tests/e2e/flagship/startup-heavy.expectation.json'), 'utf8')));
     const startup = {...flagship, facts: flagship.facts.filter(fact => fact.id === 'startup_type')};
-    const terminal = terminalFixture('This was a warm start.');
+    const terminal = terminalFixture('The platform classified this startup as warm.');
     const reference = {evidenceRefId: 'data:startup', rowIndex: 0, column, value: 'warm'};
     const semantics = {...terminal.conclusionContract!.claims![0].semantics!, predicate: 'captured.cell',
       scope: {population: 'cited_rows' as const, subjectRefs: [reference]}};
     delete semantics.numeric;
-    terminal.conclusionContract!.claims = [{id: 'type', kind: 'categorical', text: 'This was a warm start.', references: [reference], semantics}];
-    terminal.claimSupport = [{claimId: 'type', kind: 'categorical', text: 'This was a warm start.', semantics: JSON.parse(JSON.stringify(semantics)),
+    terminal.conclusionContract!.claims = [{id: 'type', kind: 'categorical', text: terminal.conclusion!, references: [reference], semantics}];
+    terminal.claimSupport = [{claimId: 'type', kind: 'categorical', text: terminal.conclusion!, semantics: JSON.parse(JSON.stringify(semantics)),
       supportLevel: 'verified', anchors: [{anchorId: 'anchor:startup', evidenceRefId: 'data:startup', version: 'evidence_contract@1',
         context: {traceId: 'trace-current', traceSide: 'current', producerKind: 'invoke_skill'},
         timeRange: {startTs: '564166786132658', endTs: '564168124787136', unit: 'ns', source: 'row'}, identity: {upid: 948},
         cells: [{column, rowIndex: 0, value: 'warm', actualValue: 'warm'}]}]}];
+    terminal.claimVerificationResult!.claimResults = [{claimId: 'type', status: 'verified',
+      referenceCells: [{anchorId: 'anchor:startup', evidenceRefId: 'data:startup', column, status: 'matched'}],
+      deterministicProof: {kind: 'captured_cell', status: 'proved', reason: 'captured_cell_value_proved',
+        anchorIds: ['anchor:startup'], evidenceRefIds: ['data:startup']},
+      propositionCoverage: {status: 'complete', covered: ['captured_cell'], uncovered: [], reason: 'proved'}}];
+    return {startup, terminal, reference, oracle: {startup_type: 'warm', start_ts: 564166786132658, upid: 948}};
+  }
+
+  it.each(['startup_type', 'original_type'])('binds the platform startup type through %s to the same startup and process', column => {
+    const fixture = startupTypeFixture(column);
+    const {terminal} = fixture;
+    const startup = {...fixture.startup, facts: fixture.startup.facts.map(fact => ({...fact, verification: 'reference_only' as const}))};
     const check = (rows: Array<Record<string, unknown>>) => evaluateAgentSseExpectation({terminal, expectation: startup,
       traceId: 'trace-current', oracleRows: {startup_type: rows}});
     const matched = check([{startup_type: 'warm', start_ts: 564166786132658, upid: 948}]);
@@ -1514,6 +1526,34 @@ describe('grouped acceptance: wrong answer, unproved answer and undelivered answ
     expect(check([{startup_type: 'cold', start_ts: 564166786132658, upid: 948}]).facts.startup_type.tier).toBe('none');
     expect(check([{startup_type: 'warm', start_ts: 564166786132658, upid: 949}]).facts.startup_type.tier).toBe('none');
     expect(check([{startup_type: 'warm', start_ts: 1, upid: 948}]).facts.startup_type.tier).toBe('none');
+  });
+
+  it.each(['startup_type', 'original_type'])('proves %s only with a complete captured-cell proposition and the same oracle identity', column => {
+    const {startup, terminal, reference, oracle} = startupTypeFixture(column);
+    const check = (candidate = terminal, row = oracle) => evaluateAgentSseExpectation({terminal: candidate, expectation: startup,
+      traceId: 'trace-current', oracleRows: {startup_type: [row]}});
+    expect(check().facts.startup_type).toMatchObject({tier: 'proved', proposition: 'proved'});
+    expect(check().checkGroups.proof['fact:startup_type:proved']).toBe(true);
+    expect(check().uncoveredFacets).toEqual([]);
+    for (const row of [{...oracle, startup_type: 'cold'}, {...oracle, upid: 949}, {...oracle, start_ts: 1}]) {
+      expect(check(terminal, row).facts.startup_type.tier).toBe('none');
+    }
+    for (const failure of ['proof_kind', 'proof_status', 'claim_status', 'coverage', 'anchors', 'references', 'subject', 'predicate']) {
+      const candidate = JSON.parse(JSON.stringify(terminal)) as TerminalAnalysisEvidence;
+      const proof = candidate.claimVerificationResult!.claimResults[0];
+      const claim = candidate.conclusionContract!.claims![0];
+      if (failure === 'proof_kind') proof.deterministicProof!.kind = 'numeric_cell';
+      if (failure === 'proof_status') proof.deterministicProof!.status = 'candidate';
+      if (failure === 'claim_status') proof.status = 'partial';
+      if (failure === 'coverage') proof.propositionCoverage!.uncovered.push('subject');
+      if (failure === 'anchors') proof.deterministicProof!.anchorIds = [];
+      if (failure === 'references') proof.referenceCells = [];
+      if (failure === 'subject') claim.semantics!.scope.subjectRefs = [{...reference, rowIndex: 1}];
+      if (failure === 'predicate') claim.semantics!.predicate = 'unknown.category';
+      candidate.claimSupport![0].semantics = JSON.parse(JSON.stringify(claim.semantics!));
+      expect(check(candidate).facts.startup_type.tier).toBe('value');
+      expect(check(candidate).checkGroups.proof['fact:startup_type:proved']).toBe(false);
+    }
   });
 
   it('fingerprints the run by content, pinned processor revision and stdlib, never by reported version text', async () => {

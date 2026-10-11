@@ -589,6 +589,10 @@ The startup-type oracle checks the platform's original classification. A
 reclassifying Skill retains it as `original_type`; that explicit alias must
 still match the oracle's value, startup time and process, not the Skill's
 corrected category.
+Strict startup acceptance requires its `captured.cell` proposition to be
+verified, with complete coverage and matching proof anchors/reference cells.
+The matcher reads original semantic subject references for both numeric and
+categorical proof; `reference_only` remains a deliberately unproved value check.
 The verifier separates three questions, so a report never reads "wrong" when
 it means "unproved":
 

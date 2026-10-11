@@ -32,7 +32,7 @@
         "startup_type",
         "original_type"
       ],
-      "verification": "reference_only",
+      "verification": "proved",
       "oracle": {
         "sql": "INCLUDE PERFETTO MODULE android.startup.startups; SELECT s.startup_type, s.ts AS start_ts, sp.upid FROM android_startups s JOIN android_startup_processes sp USING (startup_id)",
         "column": "startup_type",
