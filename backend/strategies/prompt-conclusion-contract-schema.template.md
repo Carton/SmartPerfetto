@@ -36,10 +36,10 @@ References: evidenceRefId, sourceToolCallId, sourceRef, artifactId, sourceArtifa
 
 Rule boundaries:
 
-`numeric.cell/captured.cell`: MUST select exactly one original `scope.subjectRefs` cell (locator, column, raw value), even for `cited_rows`; `references` cannot replace it.
+`numeric.cell/captured.cell`: `affirmed/asserted/one/certain`, `cited_rows`; no conditions/timeRangeNs. MUST select exactly one original `scope.subjectRefs` cell (locator/column/raw value); `references` cannot replace it.
 
-- `numeric.cell`: independent `numeric`; References retain exact raw cell values and native row IDs; preserve producer units. 195000000 ns = 195 ms, not 195000000 ms. Exact equivalents only; never round declarations or references. `eq` binds body literals with `presentation`; otherwise exact values or an explicitly marked fixed-decimal approximation (`约/about/≈`). No causal/advice proof. Totals/means need captured aggregates matching population/window/units, never components.
-- `captured.cell`: `identity/categorical`, `affirmed/asserted/one/certain`, `cited_rows`; no conditions, numeric proposition, objectRefs or time window. Subject `value`: string/boolean/null. Strict equality, no coercion/normalization/execution/process resolution/causality. Numbers use `numeric.cell`.
+- `numeric.cell`: independent `numeric`; References retain exact raw cell values and native row IDs; preserve producer units. 195000000 ns = 195 ms, not 195000000 ms. Exact equivalents only; never round declarations or references. `eq` binds body literals with `presentation`; otherwise exact values or an explicitly marked fixed-decimal approximation (`约/about/≈`). No causal/advice proof. Totals/means cite one captured aggregate cell matching population/window/units, never components.
+- `captured.cell`: `identity/categorical`; no numeric proposition/objectRefs. Subject `value`: string/boolean/null. Strict equality, no coercion/normalization/execution/process resolution/causality. Numbers use `numeric.cell`.
 
 Allowed unit conversions only: time `ns/us/µs/μs/ms/s` (us = µs = μs; 1000 per step); `Hz/kHz/MHz/GHz` (1000); `B/bytes/KiB/MiB/GiB` (B = bytes; 1024); `ratio/%/percent` (1 ratio = 100% = 100 percent). Aliases: frame/frames, event/events, fps/frames/s (frame rate, never Hz/count). `count` accepts frames/events 1:1, never conversely; other units must match verbatim. No cross-family conversion, inferred authority, tolerance, exponents, significant-figure rounding, ranges or ±.
 
