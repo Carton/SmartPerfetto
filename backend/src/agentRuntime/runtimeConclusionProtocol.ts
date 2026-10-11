@@ -12,6 +12,7 @@ import {
 } from '../services/canonicalAnalysisResult';
 import {CONCLUSION_CONTRACT_SIDECAR_MARKER, MAX_CLAIM_DIAGNOSTICS, isConclusionRootParseIssue, parseConclusionContractDeclaration,
   parseDeclaredConclusionClaims, parseDeclaredRelationProposals, relationProposalFailure,
+  wrapConclusionContractSidecarPayload,
   type ConclusionContractClaimItem} from '../agent/core/conclusionContract';
 import {analysisDeliveryFingerprint} from '../types/analysisDelivery';
 import type {AnalysisCompletion} from '../types/analysisDelivery';
@@ -473,7 +474,21 @@ export function acceptNativeDeclarationCompletion(input: {
   if (!nativeDeclarationCandidateFitsOutput(input.candidate, input.outputByteLimit)) return reject('output_limit');
   const original = inspectCandidateProtocol(input.request.originalBody);
   if (original.status !== 'absent') return reject('original_not_absent', {original: original.status});
-  const repaired = inspectCandidateProtocol(input.candidate);
+  let candidate = input.candidate;
+  let repaired = inspectCandidateProtocol(candidate);
+  if (repaired.sidecar.issues.some(issue => issue.code === 'invalid_framing')) {
+    const payload = recoverNativeDeclarationPayload(candidate);
+    const [framedSegment] = repaired.sidecar.machineSegments;
+    if (recordPayload(payload) && framedSegment) {
+      // Repair transport only, from one complete JSON object located by the
+      // native scanner. Keep the native diagnostic and run all admission and
+      // preservation checks below against the exactly re-framed declaration.
+      const framed = wrapConclusionContractSidecarPayload(JSON.stringify(payload));
+      candidate = candidate.slice(0, framedSegment.start) + framed + candidate.slice(framedSegment.end);
+      if (!nativeDeclarationCandidateFitsOutput(candidate, input.outputByteLimit)) return reject('output_limit');
+      repaired = inspectCandidateProtocol(candidate);
+    }
+  }
   const [segment, ...others] = repaired.sidecar.machineSegments;
   if (!segment || others.length || repaired.sidecar.status === 'absent' || repaired.sidecar.status === 'invalid') {
     const diagnostic = buildCandidateProtocolDiagnostic(repaired, 'native', 2);
@@ -488,12 +503,12 @@ export function acceptNativeDeclarationCompletion(input: {
   const originalBody = original.canonicalBody.trim();
   const completionProse = repaired.canonicalBody.trim();
   // A completion that echoed the body unchanged is already the candidate.
-  if (completionProse === originalBody) return input.candidate;
+  if (completionProse === originalBody) return candidate;
   if (completionProse) {
     console.log(`[DeclarationRepair] completion prose discarded: request=${input.request.reason} ` +
       `proseChars=${completionProse.length} originalChars=${originalBody.length}`);
   }
-  const joined = `${originalBody}\n\n${input.candidate.slice(segment.start, segment.end)}`;
+  const joined = `${originalBody}\n\n${candidate.slice(segment.start, segment.end)}`;
   return nativeDeclarationCandidateFitsOutput(joined, input.outputByteLimit) ? joined : reject('output_limit');
 }
 

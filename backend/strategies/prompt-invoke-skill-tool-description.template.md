@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2024-2026 Gracker (Chris) | SmartPerfetto -->
 
 Run a registered Skill against the current trace. Use `list_skills` when its ID is unknown. Use it first for scene-level measurements: the scene strategy names the Skill for each question, with its units and identity checks. When `scene_evidence` ran, cite and `fetch_artifact` its tables instead of re-running it.
+Reuse only the entry Skill that already ran. Required detail Skills remain available; invoke them when their artifacts are absent rather than replacing their producer measurements with untyped SQL aggregates.
 
 For a target follow-up, pass the positive `upid` only from its selected evidence row. The identity gate pins nested target Skills. Never infer an UPID from a name or pass NULL, zero, or ambiguity.
 

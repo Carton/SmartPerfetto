@@ -13,6 +13,26 @@ Detailed commit-level history is available via `git log`.
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-10-11
+
+### Added
+
+- Scene entry evidence is collected through the shared Skill path before the first model turn, retaining pinned identity and strategy scope.
+- Explicit numeric presentation declarations bind body literals, units, repeated occurrences and fixed-decimal rounding to original captured values using exact arithmetic.
+- Flagship acceptance checks independently distinguish value correctness, complete producer-bound proof and finished delivery.
+
+### Fixed
+
+- Conclusion declarations retain per-entry validity, native repair diagnostics and original claim precision; a bounded framing repair preserves complete declarations without accepting truncated or duplicated payloads.
+- Startup and scrolling Skills retain authored count, duration, ratio, frequency and frame-rate units through evidence capture and frontend contracts. Frame rate remains distinct from frequency and frame counts.
+- Supported native SQL quantity expressions derive units from pinned formal schemas and sealed executions without acquiring native row identities or clocks.
+- Startup acceptance compares the platform's original classification separately from Skill reclassification; semantic investigation review receives the fixed applicability constraints enforced by its parser.
+- Count equivalence, wait-chain evidence citations and delivery budgeting preserve their evidence, identity and privacy boundaries.
+
+### Changed
+
+- Regenerated the frontend contract and committed production prebuild; refreshed architecture guidance and test ownership.
+
 ## [1.15.1] - 2026-10-06
 
 ### Fixed

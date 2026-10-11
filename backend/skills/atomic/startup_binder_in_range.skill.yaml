@@ -57,6 +57,7 @@ display:
     - name: call_count
       label: "调用次数"
       type: number
+      unit: events
       format: compact
     - name: total_dur_ms
       label: "总耗时"
@@ -76,11 +77,13 @@ display:
     - name: main_thread_calls
       label: "主线程调用"
       type: number
+      unit: events
     - name: percent_of_startup
       label: "启动占比"
       type: percentage
+      unit: "%"
       format: percentage
-    - {name: all_percent_of_startup, label: "全部 Binder 启动占比", type: number, hidden: true}
+    - {name: all_percent_of_startup, label: "全部 Binder 启动占比", type: number, unit: "%", hidden: true}
 
 sql: |
   SELECT

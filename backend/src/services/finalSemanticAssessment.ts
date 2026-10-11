@@ -22,7 +22,7 @@ import {
 import {SOURCE_LOOKUP_KIND_VALUES, type SourceUseDecisionV1} from './codebase/sourceUseDecision';
 import {isPlainJsonObject} from '../utils/isPlainJsonObject';
 import {resolveAnalysisInvestigationRequirements} from '../agentRuntime/analysisInvestigationRequirements';
-import type {ResolvedAnalysisInvestigationRequirements} from '../types/analysisInvestigation';
+import type {AnalysisInvestigationRequirement, ResolvedAnalysisInvestigationRequirements} from '../types/analysisInvestigation';
 import type {InvestigationContentAssessment} from '../types/analysisInvestigationAssessment';
 import {compactInvestigationEvidenceForSemantic,
   type CompactInvestigationEvidenceSnapshot} from './evidence/investigationEvidenceLedger';
@@ -158,6 +158,8 @@ export interface FinalSemanticResponseDiagnostic {
   readonly ordinal?: number;
   readonly expectedCount?: number;
   readonly actualCount?: number;
+  readonly constraint?: 'scene_wide_applicability' | 'non_applicable_coverage' |
+    'content_location_required' | 'observed_evidence_required';
 }
 
 export interface FinalSemanticInputDiagnostic {
@@ -308,7 +310,7 @@ class SemanticResponseParseFailure extends Error {
 
 function invalidResponse(
   stage: FinalSemanticResponseDiagnostic['stage'], code: FinalSemanticResponseDiagnostic['code'],
-  details: Pick<FinalSemanticResponseDiagnostic, 'ordinal' | 'expectedCount' | 'actualCount'> = {},
+  details: Pick<FinalSemanticResponseDiagnostic, 'ordinal' | 'expectedCount' | 'actualCount' | 'constraint'> = {},
 ): never {
   throw new SemanticResponseParseFailure({stage, code, ...details});
 }
@@ -493,6 +495,11 @@ function wholeBodyCovered(locations: readonly SemanticContentLocation[], length:
 }
 type FinalSemanticPromptContext = Pick<CapturedSnapshot, 'snapshot' | 'intent' | 'traceIdentity' | 'registryFingerprint'>;
 
+function fixedInvestigationApplicability(requirement: AnalysisInvestigationRequirement,
+  scope: CapturedSnapshot['intent']['scope']): 'applicable' | undefined {
+  return scope === 'scene_wide' && !requirement.condition ? 'applicable' : undefined;
+}
+
 /** Single prompt assembly path shared by exact budgeting and dispatch. */
 export function buildFinalSemanticPrompt(captured: FinalSemanticPromptContext):
   {prompt: string; promptFingerprint: string; locationCatalog?: SemanticLocationCatalog} | undefined {
@@ -515,6 +522,10 @@ export function buildFinalSemanticPrompt(captured: FinalSemanticPromptContext):
     fixedRequirementApplicability: normalized.snapshot.reportRequirements?.requirements.map(requirement => ({
       requirementId: requirement.id,
       applicability: fixedReportRequirementApplicability(requirement, normalized.intent.scope) ?? 'semantic_decision',
+    })),
+    fixedInvestigationApplicability: normalized.snapshot.investigationRequirements?.requirements.map(requirement => ({
+      requirementId: requirement.id,
+      applicability: fixedInvestigationApplicability(requirement, normalized.intent.scope) ?? 'semantic_decision',
     })),
   })}`;
   return {prompt, promptFingerprint, ...(locationCatalog ? {locationCatalog} : {})};
@@ -774,12 +785,18 @@ function parseInvestigationResponse(
     }
     const locations = parseLocations(item.contentLocations, captured.snapshot.body, locationFormat, locationCatalog);
     const definition = definitions.get(item.requirementId)!;
-    if (!locations || (!definition.condition && captured.intent.scope === 'scene_wide' && item.applicability !== 'applicable') ||
-      (item.applicability !== 'applicable' && item.coverage !== 'unknown') ||
-      ((item.coverage === 'covered' || item.applicability === 'not_applicable') && !locations.length) ||
-      (item.evidenceStatus === 'observed' && (!item.evidenceRecordIds.length || item.scopeMatch !== 'matched'))) {
-      return invalidResponse('investigation', locations ? 'invalid_constraint' : 'invalid_location', {ordinal: index + 1});
+    if (!locations) return invalidResponse('investigation', 'invalid_location', {ordinal: index + 1});
+    let constraint: FinalSemanticResponseDiagnostic['constraint'];
+    if (fixedInvestigationApplicability(definition, captured.intent.scope) && item.applicability !== 'applicable') {
+      constraint = 'scene_wide_applicability';
+    } else if (item.applicability !== 'applicable' && item.coverage !== 'unknown') {
+      constraint = 'non_applicable_coverage';
+    } else if ((item.coverage === 'covered' || item.applicability === 'not_applicable') && !locations.length) {
+      constraint = 'content_location_required';
+    } else if (item.evidenceStatus === 'observed' && (!item.evidenceRecordIds.length || item.scopeMatch !== 'matched')) {
+      constraint = 'observed_evidence_required';
     }
+    if (constraint) return invalidResponse('investigation', 'invalid_constraint', {ordinal: index + 1, constraint});
     seen.add(item.requirementId);
     rows.push({requirementId: item.requirementId, applicability: item.applicability, coverage: item.coverage,
       contentLocations: locations, evidenceRecordIds: item.evidenceRecordIds as string[],
@@ -892,6 +909,11 @@ export function assessFinalSemantics(input: FinalSemanticAssessmentInput): Promi
       }
       if (Buffer.byteLength(response.text, 'utf8') > outputBytes) return fail('coverage_incomplete', 'output_limit');
       const parsed = parseResponse(response.text, captured, binding, locationCatalog);
+      if (parsed.diagnostic) {
+        const {stage, code, ordinal, constraint} = parsed.diagnostic;
+        console.log(`[FinalSemanticAssessment] response rejected: stage=${stage} code=${code}` +
+          ` ordinal=${ordinal ?? 'none'} constraint=${constraint ?? 'none'}`);
+      }
       return parsed.assessment ? freezeJson({...parsed.assessment, promptFingerprint}) :
         emptyAssessment('unavailable', 'invalid_response', binding, parsed.diagnostic,
           undefined, parsed.diagnostic && `resp_${parsed.diagnostic.stage}_${parsed.diagnostic.code}`);

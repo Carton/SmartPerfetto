@@ -137,8 +137,8 @@ describe('versioned investigation semantic coverage', () => {
     expect(run.dispatch).toHaveBeenCalledTimes(1);
   });
 
-  function investigationFixture() {
-    const run = fixture({scope: 'scene_wide', investigationRequirements: [{id: 'system-frequency', domain: 'cpu_frequency',
+  function investigationFixture(scope: 'scene_wide' | 'bounded_question' = 'scene_wide') {
+    const run = fixture({scope, investigationRequirements: [{id: 'system-frequency', domain: 'cpu_frequency',
       description: 'Explain observed frequency or the precise missing evidence.', required: true,
       evidenceMetrics: ['system.cpu.frequency.time_weighted']}]});
     run.reply.schemaVersion = 'final_semantic_response@3';
@@ -156,7 +156,21 @@ describe('versioned investigation semantic coverage', () => {
       investigation: {status: 'checked', requirements: [{requirementId: 'system-frequency', evidenceStatus: 'not_checked'}]}});
     expect(run.dispatch).toHaveBeenCalledTimes(1);
     expect(run.reads).not.toHaveBeenCalled();
+    const prompt = run.dispatch.mock.calls[0][0].prompt;
+    const payload = JSON.parse(prompt.slice(prompt.lastIndexOf('\n\n{') + 2));
+    expect(payload.fixedInvestigationApplicability).toEqual([{requirementId: 'system-frequency', applicability: 'applicable'}]);
   });
+
+  it.each(['scene_wide_applicability', 'non_applicable_coverage', 'content_location_required', 'observed_evidence_required'] as const)(
+    'names the %s constraint without retaining provider data', async constraint => {
+      const run = investigationFixture(constraint === 'non_applicable_coverage' ? 'bounded_question' : 'scene_wide');
+      if (constraint === 'scene_wide_applicability' || constraint === 'non_applicable_coverage') run.row.applicability = 'unknown';
+      if (constraint === 'content_location_required') run.row.contentLocations = [];
+      if (constraint === 'observed_evidence_required') run.row.evidenceStatus = 'observed';
+      expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'unavailable', reason: 'invalid_response',
+        notCheckedDetail: 'resp_investigation_invalid_constraint',
+        responseDiagnostic: {stage: 'investigation', code: 'invalid_constraint', ordinal: 1, constraint}});
+    });
 
   it('keeps old response protocols readable without certifying investigation coverage', async () => {
     const run = fixture({investigationRequirements: [{id: 'system-frequency', domain: 'cpu_frequency', description: 'Frequency', required: true}]});

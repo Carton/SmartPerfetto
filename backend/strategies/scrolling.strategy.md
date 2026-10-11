@@ -147,6 +147,7 @@ final_report_contract:
 - `submit_plan` 必须覆盖 frontmatter mandatory aspects；detail 仅 informational，不能替代 Skill/SQL/artifact 证据。
 - 条件项只在用户问题、plan 或 trace 证据命中 trigger 时强制；无数据用 `skipped` + reason/waiver。
 - 核心链路：`scrolling_analysis` → 读主线程连续工作与帧结果 artifact → 按实际任务/等待追源。FrameTimeline 是出帧结果参考，不能用帧边界裁掉原因，也不能只围绕红黄帧取证。
+  整条 Trace 的总体使用 `frame_timeline_population` 的 `total_frames/jank_frames`（所有进程、按 UPID+frame_key、原始 jank 标签含 Buffer Stuffing），与目标 App/Session 的感知掉帧口径分别引用，不用临时 SQL 重新计数替代已有捕获。
 - TextureView 的 `signal_inventory.event_count` 是信号次数，不是帧数；`consumer_notification` cadence gap 只是时序候选。未与 FrameTimeline / present 证据明确关联前，不得称为 hidden jank、producer stall 或根因。
 
 **Required phases**

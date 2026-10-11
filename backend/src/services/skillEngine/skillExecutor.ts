@@ -74,6 +74,7 @@ import {
   DataEnvelopeTraceSide,
   ColumnDefinition,
   displayResultToEnvelope,
+  isValidColumnUnit,
 } from '../../types/dataContract';
 import {
   formatDisplayContractIssue,
@@ -2771,7 +2772,7 @@ export class SkillExecutor {
         definitionFingerprint: fingerprintSkillDefinition(skill, this.fragmentRegistry), selectedSqlHash: evidenceCaptureHash(sql)};
       for (const column of display?.columns || []) {
         if (column && typeof column === 'object' && typeof column.name === 'string' &&
-            typeof column.unit === 'string' && ['ns', 'us', 'ms', 's'].includes(column.unit)) {
+            typeof column.unit === 'string' && isValidColumnUnit(column.type, column.unit)) {
           fields[column.name] = {origin, unit: column.unit};
         }
       }

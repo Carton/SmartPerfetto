@@ -8,13 +8,14 @@ import yaml from 'js-yaml';
 import Database from 'better-sqlite3';
 import {describe, it, expect} from '@jest/globals';
 import {createSkillExecutor} from '../skillExecutor';
-import {normalizeSkillDefinition} from '../skillLoader';
+import {normalizeSkillDefinition, SkillRegistry} from '../skillLoader';
 import {ArtifactStore} from '../../../agentv3/artifactStore';
-import {captureEvidenceTable, evidenceTableFor, getCapturedAnchorFacts} from '../../evidence/evidenceCapture';
+import {captureEvidenceTable, capturedEvidenceTable, evidenceTableFor, getCapturedAnchorFacts} from '../../evidence/evidenceCapture';
 import {investigationCaptureFields} from '../../evidence/investigationEvidenceLedger';
 import {prepareClaimEvidence} from '../../evidence/claimEvidencePreparation';
 import {runClaimVerification} from '../../verifier/claimVerificationRunner';
 import {buildTraceProcessorQueryProvenance} from '../../traceProcessorConnectionModel';
+import {buildColumnDefinitions, validateColumnDefinition} from '../../../types/dataContract';
 
 describe('startup display unit contracts', () => {
   const loadYaml = (relativePath: string) => {
@@ -825,6 +826,113 @@ describe('startup frequency and causal candidate boundaries', () => {
 });
 
 
+describe('Skill literal unit authority', () => {
+  it.each([
+    ['atomic/startup_gc_in_range.skill.yaml', undefined, 'total_dur_ms', 'ms'],
+    ['atomic/startup_main_thread_slices_in_range.skill.yaml', undefined, 'count', 'events'],
+    ['atomic/startup_binder_in_range.skill.yaml', undefined, 'all_percent_of_startup', '%'],
+    ['atomic/startup_critical_tasks.skill.yaml', undefined, 'preemption_count', 'events'],
+    ['atomic/cpu_system_context_in_range.skill.yaml', undefined, 'avg_freq_khz', 'kHz'],
+    ['composite/startup_detail.skill.yaml', 'cpu_freq_analysis', 'avg_freq_mhz', 'MHz'],
+    ['composite/scrolling_analysis.skill.yaml', 'smoothness_basis', 'frames', 'frames'],
+    ['composite/scrolling_analysis.skill.yaml', 'smoothness_basis', 'buffer_stuffing_frames', 'frames'],
+  ])('keeps the registered %s %s producer unit in an unchanged captured value', async (file, stepId, column, unit) => {
+    const definition = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills', file!), 'utf8')) as any;
+    const node = stepId ? definition.steps.find((step: any) => step.id === stepId) : definition;
+    const executor = createSkillExecutor({query: async () => ({columns: [column!], rows: [[2]], durationMs: 1})});
+    executor.setFragmentRegistry(new Map((node.sql_fragments ?? []).map((fragment: string) =>
+      [fragment, fs.readFileSync(path.join(process.cwd(), 'skills', fragment), 'utf8').trim()])));
+    const skill = normalizeSkillDefinition({...definition, ...node, name: 'authored_unit_capture', type: 'atomic',
+      steps: undefined, process_scope: {role: 'global_context'}}, file!)!;
+    executor.registerSkill(skill);
+    const result = await executor.execute(skill.name, 'trace', {package: '', startup_id: 1, startup_type: 'cold',
+      start_ts: 0, end_ts: 10000000, dur_ms: 10, min_dur_ns: 0, top_k: 15});
+    expect(result.error).toBeUndefined();
+    const captured = capturedEvidenceTable(evidenceTableFor(result.displayResults[0])!);
+    expect(captured?.rows).toEqual([[2]]);
+    expect(captured?.fields[column!]).toMatchObject({unit, origin: {kind: 'skill_literal'}});
+  });
+
+  it.each([
+    ['ms', 'ms', 'proved'], ['kHz', 'kHz', 'proved'], ['Hz', 'Hz', 'proved'],
+    ['frames', 'frames', 'proved'], ['events', 'events', 'proved'], ['%', '%', 'proved'],
+    ['ratio', 'ratio', 'proved'], ['KiB', 'KiB', 'proved'],
+    ['fps', 'fps', 'proved'], ['frames/s', 'fps', 'proved'], ['prio', 'prio', 'candidate'],
+    ['ms', 'ms', 'candidate', 'string'], ['frames', 'frames', 'candidate', 'duration'],
+    [undefined, 'ms', 'candidate'],
+  ])('captures only registered authored units: %s', async (producerUnit, declaredUnit, status, columnType = 'number') => {
+    const executor = createSkillExecutor({query: async () => ({columns: ['value'], rows: [[2]], durationMs: 1,
+      // A response's model-facing metadata never supplies producer authority.
+      columnUnits: {value: declaredUnit}})});
+    const skill = normalizeSkillDefinition({name: 'literal_unit', version: '1', type: 'atomic', category: 'test',
+      meta: {display_name: 'Literal unit', description: 'Unit capture contract'}, inputs: [],
+      process_scope: {role: 'global_context'}, sql: 'SELECT 2 AS value',
+      display: {layer: 'list', columns: [{name: 'value', type: columnType, format: 'duration_ms',
+        ...(producerUnit ? {unit: producerUnit} : {})}]}}, 'literal_unit.skill.yaml')!;
+    executor.registerSkill(skill);
+    const result = await executor.execute('literal_unit', 'trace');
+    expect(result.success).toBe(true);
+    const display = result.displayResults[0];
+    const store = new ArtifactStore();
+    const artifactId = store.store({skillId: skill.name, data: display.data, scopeProvenance: display.scopeProvenance,
+      sourceToolCallId: 'invoke:literal-unit',
+      traceProvenance: buildTraceProcessorQueryProvenance({traceId: 'trace', traceSide: 'current'})});
+    expect(store.registerEvidenceCapture(artifactId, evidenceTableFor(display)!, {evidenceRefId: 'literal-unit'})).toBe(true);
+    const reference = {artifactId, rowIndex: 0, column: 'value', value: 2};
+    const contract: any = {schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer', conclusions: [],
+      clusters: [], evidenceChain: [], uncertainties: [], nextSteps: [], bindingEligibility: 'eligible',
+      claims: [{id: 'value', kind: 'numeric', text: `Observed 2 ${declaredUnit}`, references: [reference],
+        semantics: {schemaVersion: 'claim_semantics@1', predicate: 'numeric.cell', polarity: 'affirmed',
+          discourse: 'asserted', quantifier: 'one', modality: 'certain',
+          scope: {population: 'cited_rows', subjectRefs: [reference]},
+          numeric: {operator: 'eq', value: 2, unit: declaredUnit}}}]};
+    const preparedEvidence = await prepareClaimEvidence({conclusionContract: contract,
+      evidenceReadView: store.createEvidenceReadView({ownerKey: 'test', allowedTraces: [{traceId: 'trace', traceSide: 'current'}]})});
+    const verified = runClaimVerification({conclusionContract: contract, preparedEvidence});
+    expect(verified.claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status,
+      reason: status === 'proved' ? 'numeric_operator_proved' : 'unit_authority_unknown'});
+    const field = getCapturedAnchorFacts(verified.claimSupport[0].anchors[0])?.fields.value;
+    if (status === 'proved') expect(field).toMatchObject({unit: producerUnit, origin: {kind: 'skill_literal',
+      skillId: 'literal_unit', definitionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      selectedSqlHash: expect.stringMatching(/^[a-f0-9]{64}$/)}});
+    else expect(field).toBeUndefined();
+  });
+
+  it('preserves reviewed units through real Skill loading and display conversion', async () => {
+    const registry = new SkillRegistry();
+    await registry.loadSkills(path.join(process.cwd(), 'skills'));
+    expect(registry.getDisplayContractIssues().filter(issue =>
+      ['scrolling_analysis', 'thread_system_summary_in_range'].includes(issue.skillName))).toEqual([]);
+    const scrolling = registry.getSkill('scrolling_analysis') as any;
+    expect(scrolling).toBeDefined();
+    const column = (stepId: string, name: string) => scrolling.steps.find((step: any) => step.id === stepId)
+      .display.columns.find((entry: any) => entry.name === name);
+    for (const [step, name, unit] of [
+      ['frame_timeline_population', 'total_frames', 'frames'], ['frame_timeline_population', 'jank_frames', 'frames'],
+      ['performance_summary', 'perceived_jank_frames', 'frames'], ['performance_summary', 'buffer_stuffing_frames', 'frames'],
+      ['performance_summary', 'jank_rate', '%'], ['performance_summary', 'refresh_rate', 'Hz'],
+      ['input_data_check', 'total_input_events', 'events'], ['input_latency_summary', 'input_backlog_frames', 'frames'],
+      ['batch_frame_root_cause', 'dur_ms', 'ms'], ['batch_frame_root_cause', 'top_slice_ms', 'ms'],
+      ['batch_frame_root_cause', 'root_cause_coverage_ratio', 'ratio'],
+    ]) expect(column(step, name)).toMatchObject({unit});
+    expect(column('performance_summary', 'actual_fps')).toMatchObject({unit: 'fps'});
+    const columns = scrolling.steps.find((step: any) => step.id === 'performance_summary').display.columns;
+    const projectedColumns = buildColumnDefinitions(columns.map((entry: any) => entry.name), columns);
+    expect(projectedColumns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({name: 'perceived_jank_frames', unit: 'frames'}),
+        expect.objectContaining({name: 'jank_rate', unit: '%'}),
+        expect.objectContaining({name: 'actual_fps', unit: 'fps'}),
+        expect.objectContaining({name: 'refresh_rate', unit: 'Hz'}),
+      ]));
+    for (const projected of projectedColumns) expect(validateColumnDefinition(projected)).toEqual([]);
+    const summary = registry.getSkill('thread_system_summary_in_range') as any;
+    expect(summary.display.columns.find((entry: any) => entry.name === 'avg_freq_khz')).toMatchObject({unit: 'kHz'});
+    for (const name of ['priority_min', 'priority_max'])
+      expect(summary.display.columns.find((entry: any) => entry.name === name)).not.toHaveProperty('unit');
+  });
+});
+
 describe('startup primitive unit authority', () => {
   it.each([
     ['startup_main_thread_slices_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
@@ -842,7 +950,7 @@ describe('startup primitive unit authority', () => {
     ['startup_binder_in_range', 'total_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_binder_in_range', 'avg_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
     ['startup_binder_in_range', 'max_dur_ms', 'ms', 'proved', 'numeric_operator_proved'],
-    ['startup_binder_in_range', 'all_percent_of_startup', '%', 'candidate', 'unit_authority_unknown'],
+    ['startup_binder_in_range', 'all_percent_of_startup', '%', 'proved', 'numeric_operator_proved'],
   ])('retains %s explicit units without inferring ambiguous percentage scale',
     async (name, column, unit, status, reason) => {
     const skill = yaml.load(fs.readFileSync(path.join(process.cwd(), 'skills/atomic', `${name}.skill.yaml`), 'utf8')) as any;

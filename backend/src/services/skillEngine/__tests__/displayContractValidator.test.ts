@@ -11,6 +11,29 @@ import {
 import type { SkillDefinition } from '../types';
 
 describe('authored display title translations', () => {
+  it('keeps registered numeric units while excluding non-time units from temporal columns', () => {
+    const columns = [
+      {name: 'frames', type: 'number', unit: 'frames'},
+      {name: 'rate', type: 'percentage', unit: '%'},
+      {name: 'frequency', type: 'number', unit: 'kHz'},
+      {name: 'size', type: 'bytes', unit: 'KiB'},
+      {name: 'frame_rate', type: 'number', unit: 'fps'},
+      {name: 'timestamp', type: 'timestamp', unit: 'Hz'},
+      {name: 'duration', type: 'duration', unit: 'frames'},
+      {name: 'category', type: 'string', unit: 'count'},
+      {name: 'unknown', type: 'number', unit: 'priority'},
+    ];
+    const skill = baseSkill({steps: [{id: 'units', type: 'atomic', sql: 'SELECT values',
+      display: {columns}} as any]});
+    expect(validateSkillDisplayContract(skill).map(issue => issue.path)).toEqual([
+      'steps[0].display.columns[5].unit', 'steps[0].display.columns[6].unit',
+      'steps[0].display.columns[7].unit', 'steps[0].display.columns[8].unit',
+    ]);
+    const cleaned = sanitizeDisplayConfigForRuntime({columns} as any, {skillName: 'units'});
+    expect(cleaned.config?.columns?.slice(0, 5)).toEqual(columns.slice(0, 5));
+    for (const column of cleaned.config?.columns?.slice(5) ?? []) expect(column).not.toHaveProperty('unit');
+  });
+
   it.each([null, [], 'title', {en: ''}, {en: '  '}, {en: 7}, {fr: 'Titre'}])('rejects malformed overrides: %p', value => {
     expect(isDisplayTitleTranslations(value)).toBe(false);
     expect(validateSkillDisplayContract(baseSkill({steps: [{id: 'step', type: 'atomic',

@@ -62,6 +62,7 @@ these closed unit mappings: time `ns/us/µs/μs/ms/s` (1000 ns = 1 us = 1 µs = 
 1000 us = 1 ms; 1000 ms = 1 s); frequency `Hz/kHz/MHz/GHz` (1000 per step);
 bytes `B/bytes/KiB/MiB/GiB` (B = bytes; 1024 per step); `ratio/%/percent`
 (1 ratio = 100% = 100 percent); aliases `frame/frames`, `event/events`.
+`fps` and `frames/s` are equal frame-rate units, distinct from Hz and frame counts.
 When the cited cell or producer declares a counted unit (`frames`/`events`),
 compare with that word; `count` is for counts whose unit is not declared.
 Verification and this review treat `count` and a producer's `frames`/`events`
@@ -134,7 +135,9 @@ Independently assess every resolved `investigationRequirements.requirements`
 entry exactly once in `investigation`, including ordinary answers and comparison.
 Only relevant tasks and windows belong to a bounded question; read_new does not
 expand scope and existing_only forbids new acquisition. Use the question and
-each semantic condition to decide applicability. An unconditional scene-wide
+each semantic condition to decide applicability. Follow the supplied
+`fixedInvestigationApplicability`: `applicable` cannot be waived;
+`semantic_decision` leaves applicability to this review. An unconditional scene-wide
 requirement is applicable. A not-applicable decision needs an exact body quote
 explaining the concrete reason. Missing data alone is not non-applicability.
 Unresolved or exempt investigation pins produce an empty investigation array.
@@ -183,7 +186,10 @@ An investigation requirement without `evidenceMetrics` is a content obligation
 whose facts retain the existing claim-verification boundary. For that row use
 `evidenceStatus: not_applicable` and an empty record list; do not invent a new
 collection requirement for methodology or recommendation prose. Content still
-needs a concrete explanation and a valid body location.
+needs a concrete explanation and a valid body location. This evidenceStatus
+does not change applicability: a scene-wide content obligation still uses
+`applicability: applicable`, with `coverage: covered` only when its explanation
+is located, otherwise `missing` or `unknown`.
 
 Return one complete JSON object, optionally inside one whole JSON code fence.
 No surrounding prose. The response schema is:
@@ -241,6 +247,9 @@ Applicability and coverage use the same enums as report rows. `scopeMatch` is
 matched, mismatched or unknown. `evidenceRecordIds` contains unique IDs from the
 supplied ledger; unknown IDs invalidate the response. Covered requires an exact
 body location. Observed also requires a nonempty record list and matched scope.
+If applicability is not applicable, coverage must be unknown. Not-applicable
+also needs a body location explaining the concrete reason. These constraints
+apply independently to every row; evidenceStatus cannot waive applicability.
 Use no acquisition, confidence, policy inference or causal-proof fields.
 
 A specific `contentLocations` entry uses exactly one of two forms. When the

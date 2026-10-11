@@ -139,6 +139,14 @@ describe('runtime native declaration completion', () => {
     const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: corrected})!;
     expect(inspectCandidateProtocol(accepted)).toMatchObject({status: 'valid', sidecar: {bindingEligibility: 'eligible'}});
     expect(inspectCandidateProtocol(accepted).canonicalBody.trim()).toBe(body);
+    if (sample.observedIssue === 'invalid_framing') {
+      const reframed = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: malformed})!;
+      expect(inspectCandidateProtocol(reframed)).toMatchObject({status: 'valid', sidecar: {bindingEligibility: 'eligible'}});
+      expect(inspectCandidateProtocol(reframed).sidecar.rawPayload).toEqual(recoverNativeDeclarationPayload(malformed));
+      expect(inspectCandidateProtocol(reframed).canonicalBody.trim()).toBe(body);
+      // Formatting acceptance does not mutate the native diagnostic or parser.
+      expect(inspectCandidateProtocol(malformed).sidecar.issues).toContainEqual({code: 'invalid_framing', path: '$'});
+    }
     const prompt = buildNativeDeclarationCompletionPrompt({request, intent: intent('investigation'), outputLanguage: 'en'});
     expect(prompt).toContain('conclusion-contract@1');
     expect(prompt).toContain(sample.observedIssue);
@@ -175,6 +183,8 @@ describe('runtime native declaration completion', () => {
       quotation: good.split('\n').map(line => `> ${line}`).join('\n'),
     };
     expect(recoverNativeDeclarationPayload(candidates[variant])).toBeUndefined();
+    expect(acceptNativeDeclarationCompletion({request: repair(`${body}\n${rejected}`)!,
+      completion: {status: 'completed'}, candidate: candidates[variant]})).toBeUndefined();
     if (variant !== 'code-example' && variant !== 'quotation') expect(repair(`${body}\n${candidates[variant]}`)).toBeUndefined();
   });
 
@@ -191,6 +201,41 @@ describe('runtime native declaration completion', () => {
     expect(prompt).toContain('invalid_declaration');
     expect(prompt).toContain('rejected_declaration');
     expect(prompt).toContain('"ordinal":2');
+  });
+
+  it('reframes complete JSON without changing exact numeric propositions, literal data or the original body', () => {
+    const exactClaim = claim('a', {text: 'Captured <value> --> 9007199254740993 ns.',
+      semantics: {...semantics, numeric: {operator: 'eq', value: '9007199254740993', unit: 'ns'}}});
+    const valid = contract([exactClaim]);
+    const malformed = valid.replace('```json', '```JSON ');
+    const request = repair(`${body}\n${malformed}`)!;
+    expect(request.diagnostic.issueCodes).toEqual(['invalid_framing']);
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+      candidate: `Edited completion prose.\n${malformed}`})!;
+    const inspected = inspectCandidateProtocol(accepted);
+    expect(inspected.status).toBe('valid');
+    expect(inspected.canonicalBody.trim()).toBe(body);
+    expect(inspected.sidecar.rawPayload).toEqual(inspectCandidateProtocol(valid).sidecar.rawPayload);
+    const altered = contract([claim('a', {...exactClaim,
+      semantics: {...semantics, numeric: {operator: 'eq', value: '9007199254740992', unit: 'ns'}}})]);
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+      candidate: altered.replace('```json', '```JSON ')})).toBeUndefined();
+  });
+
+  it('keeps root validation and both output limits after transport reframing', () => {
+    const valid = contract([claim('a'), claim('b')]);
+    const malformed = valid.replace('```json\n', '').replace('\n```\n', '\n');
+    const request = repair(`${body}\n${malformed}`)!;
+    const invalidRoot = malformed.replace('"focused_answer"', '"invalid_mode"');
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: invalidRoot}))
+      .toBeUndefined();
+    const completion = JSON.stringify(recoverNativeDeclarationPayload(malformed));
+    const shortFrame = `<!-- smartperfetto:conclusion-contract@1\n${completion}\n-->`;
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: shortFrame,
+      outputByteLimit: Buffer.byteLength(shortFrame, 'utf8')})).toBeUndefined();
+    const reframed = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: shortFrame})!;
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: shortFrame,
+      outputByteLimit: Buffer.byteLength(reframed, 'utf8') - 1})).toBeUndefined();
   });
 
   it.each(['en', 'zh-CN'] as const)('locates invalid JSON without copying parser messages into diagnostics in %s', outputLanguage => {
@@ -562,6 +607,7 @@ describe('runtime native declaration completion', () => {
 
     it('rejects a repair that drops a valid claim', () => {
       expect(rejectionReason(contract([claim('b')]))).toBe('claim_ids_changed');
+      expect(rejectionReason(contract([claim('b')]).replace('```json', '```JSON '))).toBe('claim_ids_changed');
     });
 
     it('rejects a repair that adds a new claim id', () => {
@@ -615,11 +661,17 @@ describe('runtime native declaration completion', () => {
       // Fixing the claim while keeping the valid proposal in place is accepted.
       const fixed = base([proposal], [claim('a'), claim('b')]);
       expect(accept(request, fixed)).toBe(`${body}\n\n${fixed}`);
+      const framed = accept(request, fixed.replace('```json', '```JSON '))!;
+      expect(inspectCandidateProtocol(framed).sidecar.rawPayload).toEqual(inspectCandidateProtocol(fixed).sidecar.rawPayload);
       // Changing the originally-valid proposal's semantics is rejected.
       expect(rejectionReason(base([{...proposal, kind: 'wakeup'}], [claim('a'), claim('b')]), original))
         .toBe('valid_proposal_changed');
+      expect(rejectionReason(base([{...proposal, kind: 'wakeup'}], [claim('a'), claim('b')])
+        .replace('```json', '```JSON '), original)).toBe('valid_proposal_changed');
       // Dropping the proposal (fewer positions) is rejected.
       expect(rejectionReason(base([], [claim('a'), claim('b')]), original)).toBe('relation_positions_changed');
+      expect(rejectionReason(base([], [claim('a'), claim('b')]).replace('```json', '```JSON '), original))
+        .toBe('relation_positions_changed');
     });
 
     it('lets an invalid proposal be fixed only under its preserved id or resolvable identity', () => {

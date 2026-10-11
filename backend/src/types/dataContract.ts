@@ -4,6 +4,7 @@
 
 import { copyScopeProvenance, scopeMetadata, type EvidenceScopeMetadata, type EvidenceScopeProvenanceV1 } from './identityContract';
 import type {SceneTimelineView, SceneReportReference} from './sceneTimeline';
+import {claimUnitFor} from '../utils/claimUnits';
 
 /**
  * SmartPerfetto Data Contract
@@ -109,8 +110,8 @@ export interface ColumnDefinition {
   /** For timestamp click actions, the associated duration column for range selection */
   durationColumn?: string;
 
-  /** Time unit for timestamp/duration columns (default: 'ns') */
-  unit?: 'ns' | 'us' | 'ms' | 's';
+  /** Authored quantity unit; timestamp/duration columns accept time units only. */
+  unit?: string;
 
   /** Whether this column should be hidden by default */
   hidden?: boolean;
@@ -211,6 +212,14 @@ export function inferColumnDefinition(columnName: string): ColumnDefinition {
 const VALID_COLUMN_UNITS = ['ns', 'us', 'ms', 's'] as const;
 const VALID_COLUMN_WIDTHS = ['narrow', 'medium', 'wide', 'auto'] as const;
 
+/** Formatting and column-name inference never establish a quantity's unit. */
+export function isValidColumnUnit(type: unknown, unit: unknown): unit is string {
+  if (typeof unit !== 'string') return false;
+  if (type === undefined || type === 'timestamp' || type === 'duration')
+    return VALID_COLUMN_UNITS.includes(unit as typeof VALID_COLUMN_UNITS[number]);
+  return ['number', 'percentage', 'bytes'].includes(String(type)) && claimUnitFor(unit) !== undefined;
+}
+
 function normalizeDisplayLayer(layer: unknown): DisplayLayer {
   return typeof layer === 'string' && isValidDisplayLayer(layer) ? layer : 'list';
 }
@@ -238,7 +247,7 @@ function sanitizeColumnDefinition(name: string, explicit?: Partial<ColumnDefinit
   if (VALID_COLUMN_FORMATS.includes(explicit.format as ColumnFormat)) column.format = explicit.format as ColumnFormat;
   if (VALID_CLICK_ACTIONS.includes(explicit.clickAction as ClickAction)) column.clickAction = explicit.clickAction as ClickAction;
   if (typeof explicit.durationColumn === 'string') column.durationColumn = explicit.durationColumn;
-  if (VALID_COLUMN_UNITS.includes(explicit.unit as any)) column.unit = explicit.unit;
+  if (isValidColumnUnit(column.type, explicit.unit)) column.unit = explicit.unit;
   if (typeof explicit.hidden === 'boolean') column.hidden = explicit.hidden;
   if (typeof explicit.sortable === 'boolean') column.sortable = explicit.sortable;
   if (explicit.defaultSort === 'asc' || explicit.defaultSort === 'desc') column.defaultSort = explicit.defaultSort;
@@ -1589,10 +1598,10 @@ export function validateColumnDefinition(column: any): ValidationError[] {
     });
   }
 
-  if (column.unit && !VALID_COLUMN_UNITS.includes(column.unit)) {
+  if (column.unit && !isValidColumnUnit(column.type, column.unit)) {
     errors.push({
       path: 'unit',
-      message: `Invalid unit: ${column.unit}. Valid values: ${VALID_COLUMN_UNITS.join(', ')}`,
+      message: `Invalid unit for ${column.type}: ${column.unit}`,
       value: column.unit,
     });
   }

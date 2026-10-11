@@ -6682,7 +6682,7 @@
     },
     "cpu_system_context_in_range": {
       "source_file": "backend/skills/atomic/cpu_system_context_in_range.skill.yaml",
-      "source_sha256": "3710a589131ec1ee6dd86475a1c8d00a5b2cc57ed4a1ccead52b2dbaeb4b050d",
+      "source_sha256": "474e3b45c7e46c65f6651350cf3496953e90ad29cd0d8c68475f9ba2edb6228e",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [
@@ -16351,7 +16351,7 @@
     },
     "scrolling_analysis": {
       "source_file": "backend/skills/composite/scrolling_analysis.skill.yaml",
-      "source_sha256": "611a06dd906d52c4f70b68262fb7f661fe1ea8b92a26e8ebb2eac7714969c84a",
+      "source_sha256": "03591cddcd2bd4a278369cc8089e92f224d405b0e9adf66f618e4e44a72056fd",
       "type": "composite",
       "execution": "steps",
       "declared_modules": [
@@ -17612,7 +17612,7 @@
     },
     "startup_analysis": {
       "source_file": "backend/skills/composite/startup_analysis.skill.yaml",
-      "source_sha256": "8c1bf5a38d906e39a6f1d4430b5946930f50b15a3a389f49dcebb63d8e74b2bf",
+      "source_sha256": "b0199e004e16cb982d3bf5948b1f9d804cafdea85b0a441def44b04b467db7f2",
       "type": "composite",
       "execution": "steps",
       "declared_modules": [
@@ -17700,7 +17700,7 @@
     },
     "startup_binder_in_range": {
       "source_file": "backend/skills/atomic/startup_binder_in_range.skill.yaml",
-      "source_sha256": "f8501871e41d8a520b4e178ae2e1ca95ebcb94eae09be26d6bca6f380a5eee86",
+      "source_sha256": "a546066985e0bfb6759477f01c6d4881ac8395de9f9d0d6be1b08a658225bd8e",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [
@@ -17901,7 +17901,7 @@
     },
     "startup_critical_tasks": {
       "source_file": "backend/skills/atomic/startup_critical_tasks.skill.yaml",
-      "source_sha256": "6d2a85573dfd730c95ae1db602444517d81d127c25e2c1c67015020fab6905d6",
+      "source_sha256": "aa06ec37f7a6cb2c578bd8c69ba1dd37f01fdbc6e3ea545366fb13943193abd0",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [
@@ -17967,7 +17967,7 @@
     },
     "startup_detail": {
       "source_file": "backend/skills/composite/startup_detail.skill.yaml",
-      "source_sha256": "cdf73ddd0bc9f5f3d8d5cb1b130d4ac79a5a0f132ec3f473fdcd40b76e6309e5",
+      "source_sha256": "88274021b675057f840219ba6e6cc0e5f2d83d927051fded2044a10fbb8ab9b3",
       "type": "composite",
       "execution": "steps",
       "declared_modules": [
@@ -18338,7 +18338,7 @@
     },
     "startup_gc_in_range": {
       "source_file": "backend/skills/atomic/startup_gc_in_range.skill.yaml",
-      "source_sha256": "181360569e33efbdedc81db2d067b94dff889c7b6324b2c5ddae70db2ebc8208",
+      "source_sha256": "7dce1b22485cd556843bf0cd7c97fe97cd4c0fa80467c795a47511d397edcf34",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [
@@ -18555,7 +18555,7 @@
     },
     "startup_main_thread_slices_in_range": {
       "source_file": "backend/skills/atomic/startup_main_thread_slices_in_range.skill.yaml",
-      "source_sha256": "7286527c884bdbc89b1e6acdfbdaa8174d1d43bab1fe793a46d6ae7406e1f779",
+      "source_sha256": "cfdc10ca4aec7958dba4c1b4dc8ce7500213515b9032ac4c647f50a2cc695194",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [
@@ -20921,7 +20921,7 @@
     },
     "thread_system_summary_in_range": {
       "source_file": "backend/skills/atomic/thread_system_summary_in_range.skill.yaml",
-      "source_sha256": "31a123f185507ef4507eccba97c35989dc3ab7c66b25bc6a4547216964c5cd8a",
+      "source_sha256": "e523b849bf1e8c93117737f0a334009b9877f6001a098b8e3eed2888cf077dac",
       "type": "atomic",
       "execution": "root",
       "declared_modules": [

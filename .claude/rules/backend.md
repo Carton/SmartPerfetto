@@ -392,7 +392,11 @@ Keep these boundaries intact:
   `subreason` `shape|operator|value|unit`). The completion supplies only the
   declaration: `acceptNativeDeclarationCompletion` returns the original body
   plus the completion's sidecar and discards any prose the completion adds, so
-  the delivered answer cannot change in a repair. The per-item acceptance
+  the delivered answer cannot change in a repair. A unique closed repair
+  segment with complete JSON may be re-framed deterministically, preserving
+  decoded fields and values; it still passes the unchanged strict parser,
+  output caps and preservation matrix. Duplicated, truncated or ordinary
+  quoted/fenced examples are never admitted by this repair. The per-item acceptance
   matrix requires the repaired root to be valid, the raw claim id set to be
   exactly the original's, every originally-valid claim fingerprint-equal at its
   position, the invalid claim count to strictly decrease (or the root itself to

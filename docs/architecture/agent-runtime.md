@@ -336,6 +336,15 @@ witness、受信单位/字段语义或覆盖时保留候选/未知状态；
 联合决定。报告、CLI 和 snapshot 保留 provenance；chat 分开投影正文、machine sidecar
 和结构化 runtime appendix，不能机械删改自然语言结论。
 
+Skill 的字面 `display.columns[].unit` 经过同一列类型/单位校验后，随定义指纹和实际 SQL
+哈希进入捕获；作者校验、运行清洗与 DataEnvelope 不得只保留时间单位。单位目录位于
+`utils/claimUnits.ts`，数值列支持其封闭数量维度，timestamp/duration 仍只接受时间单位。
+帧率 `fps` 与 `frames/s` 等价，但与 Hz、帧数互不换算。显示格式、列名及模型声明不能
+提供单位权威。原生 SQL 仅在已固定的正式 schema、单关系只读语句及受支持表达式
+同时成立时签发数量单位：COUNT 为 count，duration 聚合、时间点差与明确时间缩放
+保留相应单位；规则指纹绑定实际 SQL、schema 和 processor epoch。表达式不签发
+原生行身份或 clock；未知关系、复杂查询与无单位字段仍保持未知。
+
 数值引用比较与正文显示精度保持分离。原始引用和 `numeric.cell` 命题仍做精确比较；
 `numeric.presentation` 的显式显示声明（`numeric_presentation@1`）绑定正文中的数字、
 重复出现序号、单位和小数位。`numericPresentationAssessment.ts` 在语义审核前，依据

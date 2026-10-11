@@ -2,9 +2,17 @@
 // Copyright (C) 2024-2026 Gracker (Chris)
 // This file is part of SmartPerfetto. See LICENSE for details.
 
-import {COUNTED_PRODUCER_DIMENSIONS, countedUnitDimension, declaredUnitAcceptsProducerDimension} from '../claimUnits';
+import {COUNTED_PRODUCER_DIMENSIONS, claimUnitFor, countedUnitDimension, declaredUnitAcceptsProducerDimension} from '../claimUnits';
 
 describe('declared unit / producer dimension equivalence (claimUnits)', () => {
+  it('keeps frame rates distinct from frame counts and clock frequency', () => {
+    expect(claimUnitFor('fps')).toEqual(claimUnitFor('frames/s'));
+    expect(claimUnitFor('fps')?.dimension).toBe('frame_rate');
+    expect(claimUnitFor('fps')?.dimension).not.toBe(claimUnitFor('Hz')?.dimension);
+    expect(claimUnitFor('fps')?.dimension).not.toBe(claimUnitFor('frames')?.dimension);
+    expect(countedUnitDimension('fps')).toBeUndefined();
+    expect(declaredUnitAcceptsProducerDimension('count', 'frame_rate')).toBe(false);
+  });
   it('counts exactly frames and events as producer dimensions', () => {
     expect([...COUNTED_PRODUCER_DIMENSIONS].sort()).toEqual(['events', 'frames']);
   });

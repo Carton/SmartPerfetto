@@ -12,6 +12,7 @@ import {
   VALID_DISPLAY_LAYERS,
   VALID_DISPLAY_LEVELS,
   isValidDisplayLayer,
+  isValidColumnUnit,
 } from '../../types/dataContract';
 
 export interface DisplayContractIssue {
@@ -28,7 +29,6 @@ export interface ValidateDisplayContractOptions {
   filePath?: string;
 }
 
-const VALID_TIME_UNITS = ['ns', 'us', 'ms', 's'] as const;
 const VALID_WIDTHS = ['narrow', 'medium', 'wide', 'auto'] as const;
 
 export function isDisplayTitleTranslations(value: unknown): value is NonNullable<DisplayConfig['title_i18n']> {
@@ -146,13 +146,13 @@ function validateColumnDefinition(
     );
   }
 
-  if (col.unit && !VALID_TIME_UNITS.includes(col.unit as any)) {
+  if (col.unit && !isValidColumnUnit(col.type, col.unit)) {
     pushIssue(
       issues,
       skillName,
       `${path}.unit`,
       `${path}.unit`,
-      `Invalid time unit. Valid values: ${VALID_TIME_UNITS.join(', ')}`,
+      `Invalid unit for column type ${col.type}`,
       col.unit,
       options,
       stepId,
@@ -492,13 +492,13 @@ export function sanitizeDisplayConfigForRuntime(
           delete cleanColumn.clickAction;
         }
 
-        if (cleanColumn.unit && !VALID_TIME_UNITS.includes(cleanColumn.unit as any)) {
+        if (cleanColumn.unit && !isValidColumnUnit(cleanColumn.type, cleanColumn.unit)) {
           pushIssue(
             issues,
             skillName,
             `${path}.unit`,
             `${path}.unit`,
-            `Invalid time unit. Valid values: ${VALID_TIME_UNITS.join(', ')}`,
+            `Invalid unit for column type ${cleanColumn.type}`,
             cleanColumn.unit,
             options,
             stepId,

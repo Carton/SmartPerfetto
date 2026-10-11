@@ -123,7 +123,7 @@ function captureFixture(service: TraceProcessorService, traceId: string, toolNam
     }},
   });
   const handler = mcp.toolDefinitions.find(tool => tool.name === toolName)!.shared.handler;
-  async function execute(sql: string, column: string, expected: number, withExecutionIdentity = true, terminalProjection = false) {
+  async function execute(sql: string, column: string, expected: number, withExecutionIdentity = true, terminalProjection = false, unit = 'ns') {
     envelopes.length = 0;
     await handler({sql, ...(traceSide === 'reference' ? {trace: 'reference'} : {})}, {});
     expect(envelopes).toHaveLength(1);
@@ -133,10 +133,10 @@ function captureFixture(service: TraceProcessorService, traceId: string, toolNam
       ...(withExecutionIdentity ? {sourceToolCallId: envelope.meta.sourceToolCallId} : {})};
     const contract = parseConclusionContractDeclaration({schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
       conclusions: [], clusters: [], evidenceChain: [], uncertainties: [], nextSteps: [],
-      claims: [{id: 'duration', text: `The returned duration is ${expected} ns.`, kind: 'numeric', references: [ref],
+      claims: [{id: 'duration', text: `The returned quantity is ${expected} ${unit}.`, kind: 'numeric', references: [ref],
         semantics: {schemaVersion: 'claim_semantics@1', predicate: 'numeric.cell', polarity: 'affirmed',
           discourse: 'asserted', quantifier: 'one', modality: 'certain',
-          scope: {population: 'cited_rows', subjectRefs: [ref]}, numeric: {operator: 'eq', value: expected, unit: 'ns'}}}],
+          scope: {population: 'cited_rows', subjectRefs: [ref]}, numeric: {operator: 'eq', value: expected, unit}}}],
     }).contract!;
     const view = artifactStore.createEvidenceReadView({ownerKey: 'raw-sql-capture-test',
       allowedTraces: [{traceId, traceSide}]});
@@ -188,15 +188,38 @@ describe('pinned native raw SQL -> MCP capture -> numeric proof', () => {
     }
   });
 
-  it('does not infer units from an expression alias or revive trust after a mutation', async () => {
+  it('derives a fixed native conversion without borrowing alias units or reviving mutated trust', async () => {
     const {processor, execute} = await fixture('execute_sql');
-    const expression = await execute(`SELECT dur / 1000000 AS dur FROM slice ${filter}`, 'dur', 42);
-    expect(expression.claimVerificationResult.claimResults[0].deterministicProof?.status).not.toBe('proved');
-    expect(expression.claimVerificationResult.claimResults[0].deterministicProof?.reason).toBe('unit_authority_unknown');
+    for (const alias of ['dur', 'unrelated']) {
+      const expression = await execute(`SELECT dur / 1000000 AS ${alias} FROM slice ${filter}`, alias, 42, true, false, 'ms');
+      expect(expression.claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status: 'proved'});
+      expect(getCapturedAnchorFacts(expression.claimSupport[0].anchors[0])?.fields[alias]).toMatchObject({unit: 'ms'});
+    }
+    const unknown = await execute(`SELECT 42 / 1000000 AS dur_ms FROM slice ${filter}`, 'dur_ms', 0, true, false, 'ms');
+    expect(unknown.claimVerificationResult.claimResults[0].deterministicProof?.reason).toBe('unit_authority_unknown');
     await processor.query('CREATE PERFETTO TABLE unit_test_taint AS SELECT 1 AS value');
     await processor.query('DROP TABLE unit_test_taint');
     const after = await execute(`SELECT dur FROM slice ${filter}`, 'dur', 42_000_000);
     expect(after.claimVerificationResult.claimResults[0].deterministicProof?.reason).toBe('unit_authority_unknown');
+  });
+
+  it.each(['execute_sql', 'execute_sql_on'] as const)('retains native aggregate units through %s without manufacturing row identity', async tool => {
+    const {processor, execute} = await fixture(tool);
+    for (const expression of ['SUM(dur)', 'MIN(dur)', 'MAX(dur)', 'AVG(dur)']) {
+      const result = await execute(`SELECT ${expression} AS total FROM slice ${filter}`, 'total', 42_000_000);
+      expect(result.claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status: 'proved'});
+      expect(result.claimVerificationResult.claimResults[0].deterministicProof?.nativeRows).toBeUndefined();
+      expect(getCapturedAnchorFacts(result.claimSupport[0].anchors[0])?.nativeRow).toBeUndefined();
+    }
+    const count = await execute(`SELECT COUNT(*) AS n FROM slice ${filter}`, 'n', 1, true, false, 'count');
+    expect(count.claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status: 'proved'});
+    const frames = await execute(`SELECT COUNT(*) AS n FROM slice ${filter}`, 'n', 1, true, false, 'frames');
+    expect(frames.claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status: 'rejected', reason: 'unit_dimension_mismatch'});
+    const start = Number((await processor.query(`SELECT ts FROM slice ${filter}`)).rows[0][0]);
+    const clipped = await execute(`SELECT SUM(MIN(ts + dur, ${start + 30_000_000}) - MAX(ts, ${start + 10_000_000})) AS clipped
+      FROM slice ${filter}`, 'clipped', 20_000_000);
+    expect(clipped.claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status: 'proved'});
+    expect(getCapturedAnchorFacts(clipped.claimSupport[0].anchors[0])?.nativeRow).toBeUndefined();
   });
 
   it.each(['execute_sql', 'execute_sql_on'] as const)('retains actual canonical row identity through %s and ignores computed IDs', async tool => {
