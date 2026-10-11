@@ -1709,14 +1709,14 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
           repairInvalid: true,
         });
         const declarationRequest = declarationNeed &&
-          nativeDeclarationBodyCanFitOutput(nativeCandidate, 128 * 1024) &&
+          nativeDeclarationBodyCanFitOutput(declarationNeed.originalBody, 128 * 1024) &&
           (remainingBudgetUsd === undefined || remainingBudgetUsd > 0) ? declarationNeed : undefined;
         // Which gate closed is otherwise unrecoverable after the run: the candidate
         // carrying the declaration is private and never persisted.
         if (!declarationRequest) {
           console.log(`[ClaudeRuntime] declaration repair skipped: need=${declarationNeed?.reason ?? 'none'} ` +
             `completion=${projectedCandidate.deliveryContext.completion?.status ?? 'unknown'} turns=${remainingTurns} ` +
-            `fits=${nativeDeclarationBodyCanFitOutput(nativeCandidate, 128 * 1024)} ` +
+            `fits=${nativeDeclarationBodyCanFitOutput(declarationNeed?.originalBody ?? nativeCandidate, 128 * 1024)} ` +
             `budget=${remainingBudgetUsd === undefined ? 'unbounded' : remainingBudgetUsd > 0 ? 'available' : 'exhausted'}`);
         }
         const recovery = chooseRuntimeDraftRecovery({

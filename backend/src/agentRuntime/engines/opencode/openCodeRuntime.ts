@@ -2923,7 +2923,7 @@ export class OpenCodeRuntime extends EventEmitter implements IOrchestrator {
     const declarationOutputLimit = 64 * 1024;
     const declarationPrompt = declarationRequest &&
       buildNativeDeclarationCompletionPrompt({request: declarationRequest, intent: turnIntent, outputLanguage});
-    if (declarationRequest && declarationPrompt && nativeDeclarationBodyCanFitOutput(conclusion, declarationOutputLimit) &&
+    if (declarationRequest && declarationPrompt && nativeDeclarationBodyCanFitOutput(declarationRequest.originalBody, declarationOutputLimit) &&
         Date.now() < deadlineMs && admitDelivery('declaration_repair', declarationPrompt)) {
       try {
         assertActive();

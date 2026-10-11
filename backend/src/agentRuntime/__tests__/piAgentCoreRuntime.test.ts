@@ -3653,6 +3653,33 @@ describe('experimental Pi agent-core runtime contract', () => {
     expect(JSON.stringify(updates)).not.toContain('DECLARATION_COMPLETION_MUST_STAY_BUFFERED');
   });
 
+  it('repairs an oversized rejected declaration when the unchanged body fits the Pi output cap', async () => {
+    passVerification();
+    const body = 'Frame 12 missed its deadline.';
+    const valid = candidateWithPopulation(body, 'cited_rows');
+    const payload = inspectCandidateProtocol(valid).sidecar.rawPayload;
+    const rejected = valid.replace('```json\n', `\`\`\`JSON\n${' '.repeat(80 * 1024)}`);
+    expect(Buffer.byteLength(rejected, 'utf8')).toBeGreaterThan(64 * 1024);
+    expect(inspectCandidateProtocol(rejected).canonicalBody.trim()).toBe(body);
+    let completionPrompt = '';
+    FakePiAgent.promptHandler = async (agent, prompt, index) => {
+      if (index === 2) {
+        completionPrompt = prompt;
+        expect(agent.state.tools).toEqual([]);
+      }
+      return [{role: 'assistant', stopReason: 'stop', content: [{type: 'text',
+        text: index === 1 ? rejected : JSON.stringify(payload)}]}];
+    };
+    const result = await typedRuntime().analyze('query', 'pi-oversized-rejected-sidecar', 'trace-pi');
+    expect(FakePiAgent.instances[0].promptCount).toBe(2);
+    expect(completionPrompt).toContain('invalid_declaration');
+    expect(completionPrompt).toContain('只输出完整声明 JSON 对象');
+    expect(inspectCandidateProtocol(result.conclusion).status).toBe('valid');
+    expect(inspectCandidateProtocol(result.conclusion).canonicalBody.trim()).toBe(body);
+    expect(result.completion).toMatchObject({status: 'completed', attemptId: '2'});
+    expect(Buffer.byteLength(result.conclusion, 'utf8')).toBeLessThan(64 * 1024);
+  });
+
   it('does not dispatch declaration completion when the original body cannot fit the Pi output cap', async () => {
     passVerification();
     const body = 'x'.repeat(64 * 1024);

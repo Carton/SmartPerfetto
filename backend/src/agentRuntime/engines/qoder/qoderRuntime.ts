@@ -1324,7 +1324,7 @@ export class QoderRuntime extends EventEmitter implements IOrchestrator {
       });
       const declarationPrompt = declarationRequest &&
         buildNativeDeclarationCompletionPrompt({request: declarationRequest, intent: turnIntent, outputLanguage});
-      if (declarationRequest && declarationPrompt && nativeDeclarationBodyCanFitOutput(originalAnswer, declarationOutputLimit) &&
+      if (declarationRequest && declarationPrompt && nativeDeclarationBodyCanFitOutput(declarationRequest.originalBody, declarationOutputLimit) &&
           sessionState.deadlineMs !== undefined && Date.now() < sessionState.deadlineMs &&
           admitDelivery('declaration_repair', declarationPrompt, sessionState.deadlineMs)) {
         await retireAcquisition();

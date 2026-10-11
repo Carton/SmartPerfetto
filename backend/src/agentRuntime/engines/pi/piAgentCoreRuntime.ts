@@ -1757,7 +1757,7 @@ export class PiAgentCoreRuntime extends EventEmitter implements IOrchestrator {
         remainingDeliveryTurns: rounds < turnBudget.totalTurns ? turnBudget.deliveryTurns : 0,
         repairInvalid: true,
       });
-      const declarationRequest = declarationNeed && nativeDeclarationBodyCanFitOutput(acceptedText, 64 * 1024)
+      const declarationRequest = declarationNeed && nativeDeclarationBodyCanFitOutput(declarationNeed.originalBody, 64 * 1024)
         ? declarationNeed : undefined;
       const recovery = chooseRuntimeDraftRecovery({declarationNeed, declarationRequest, recoverableIssues: draft.recoverableIssues});
       const outputLimitDelivery = acceptedCompletion.status === 'incomplete' && acceptedCompletion.reason === 'output_limit' &&
