@@ -316,6 +316,10 @@ describe('enterprise report routes', () => {
     expect(decodeURIComponent(encodedFilename!)).toBe(
       `${safeTraceNamePrefix}-2023-11-14T22-13-20Z-SmartPerfetto.html`,
     );
+    expect(exportRes.text).toContain(`data-report-filename="${decodeURIComponent(encodedFilename!)}"`);
+    const viewRes = await ssoHeaders(request(app).get(`/api/reports/${reportId}`));
+    expect(viewRes.status).toBe(200);
+    expect(viewRes.text).toContain(`data-report-filename="${decodeURIComponent(encodedFilename!)}"`);
   });
 
   it('stores reports in report_artifacts and reloads them from scoped data storage', async () => {

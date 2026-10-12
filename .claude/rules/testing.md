@@ -104,6 +104,7 @@ more specific tier; do not also register them in a default-chain focused tier.
 | Contract/type-only change | `cd backend && npm run typecheck` plus relevant contract tests |
 | CRUD-only service, no agent/runtime path | That service's `__tests__/<name>.test.ts` |
 | MCP, memory, report, provider, session, or agent runtime | `cd backend && npm run test:scene-trace-regression` |
+| HTML report rendering, saved report controls or layout | Owning report tests and `npm run test:e2e:reports`; it builds the backend and uses the pinned Perfetto UI Playwright dependencies plus installed Chrome to check all templates, narrow layouts, CSP downloads, offline reopening and printing. Artifacts are written under `output/playwright/html-reports/` |
 | Raw SQL capture units or native processor provenance | `npm --prefix backend run test:raw-sql-provenance` plus affected parser, worker lifecycle, RPC and capture tests; this gate ensures the pinned binary and materializes the Trace fixture |
 | Skill YAML | `cd backend && npm run validate:skills` plus scene trace regression |
 | Strategy/template Markdown | `cd backend && npm run validate:strategies` plus scene trace regression |

@@ -14,6 +14,7 @@
  */
 
 import markdownit from 'markdown-it';
+import {createHash} from 'node:crypto';
 import {renderSceneTimelineHtml} from './sceneReport/sceneTimelineHtml';
 import {claimAuditRows, claimVerificationStatusLine, investigationStatusLines, summarizeClaimVerification} from './analysisInvestigationPresentation';
 import {analysisConfidenceIsGrounded} from '../agentv3/analysisTermination';
@@ -28,7 +29,6 @@ import {
   type AnalysisReceipt,
   DataEnvelope,
   ColumnDefinition,
-  buildColumnDefinitions,
   type UiActionProposalV1,
 } from '../types/dataContract';
 import type { QueryReviewV1 } from '../types/queryReviewContract';
@@ -38,6 +38,7 @@ import {
   REPORT_MERMAID_ASSET_ROUTE,
 } from './reportCausalMapAssets';
 import { REPORT_LAYOUT_FIX_CSS } from './reportLayoutAssets';
+import {REPORT_DOCUMENT_SCRIPT, REPORT_DOCUMENT_NO_SCRIPT} from './reportDocumentAssets';
 import { DEFAULT_OUTPUT_LANGUAGE, localize, parseOutputLanguage, type OutputLanguage } from '../agentv3/outputLanguage';
 import type { ComparisonReportSection } from '../agentv3/sessionStateSnapshot';
 import type { ClaimVerificationResult } from '../types/claimVerification';
@@ -278,26 +279,6 @@ export class HTMLReportGenerator {
   }
 
   /**
-   * 【P2 Fix】可配置的元数据列名
-   * 这些列的值在同一表格中通常是恒定的，会被提取到表头显示
-   */
-  private static readonly METADATA_COLUMN_PATTERNS: readonly string[] = [
-    'process_name', 'Process Name',
-    'layer_name', 'Layer Name',
-    'package_name', 'Package Name',
-    'app_name', 'App Name',
-    'trace_id', 'Trace ID',
-    'session_id', 'Session ID',
-  ];
-
-  /**
-   * 【P2 Fix】检查列名是否为元数据列
-   */
-  private isMetadataColumn(colName: string): boolean {
-    return HTMLReportGenerator.METADATA_COLUMN_PATTERNS.includes(colName);
-  }
-
-  /**
    * 标识符列（如 frame_id/session_id）不应做千分位格式化，
    * 否则用户复制后会变成 "1,435,508" 这类不可直接用于 drill-down 的值。
    */
@@ -365,26 +346,18 @@ export class HTMLReportGenerator {
   private formatRelativeSeconds(ns: bigint): string {
     const sign = ns < 0n ? '-' : '';
     const absNs = ns < 0n ? -ns : ns;
-    const seconds = Number(absNs) / 1e9;
-    return `${sign}${seconds.toFixed(3)}s`;
+    const fraction = (absNs % 1000000000n).toString().padStart(9, '0').replace(/0+$/, '');
+    return `${sign}${absNs / 1000000000n}${fraction ? '.' + fraction : ''}s`;
   }
 
-  private stringifyValueForDisplay(value: any, maxLen: number = 200): string {
+  private stringifyValueForDisplay(value: any): string {
     if (value === null || value === undefined) return 'NULL';
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    if (typeof value !== 'object') return String(value);
+    try {
+      return JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item);
+    } catch {
       return String(value);
     }
-    try {
-      const json = JSON.stringify(value);
-      if (typeof json === 'string' && json.length > 0) {
-        return json.length > maxLen ? `${json.substring(0, maxLen)}...` : json;
-      }
-    } catch {
-      // Fall through to String(value) for non-serializable objects.
-    }
-    const raw = String(value);
-    return raw.length > maxLen ? `${raw.substring(0, maxLen)}...` : raw;
   }
 
   /**
@@ -824,6 +797,7 @@ export class HTMLReportGenerator {
         border: 1px solid #ccc;
       }
     }
+    ${REPORT_LAYOUT_FIX_CSS}
   </style>
 </head>
 <body>
@@ -834,8 +808,8 @@ export class HTMLReportGenerator {
         <h1>📊 SmartPerfetto 性能分析报告</h1>
         <div class="meta">
             <span>📅 生成时间: ${new Date(data.timestamp).toLocaleString('zh-CN')}</span>
-            <span>🆔 会话ID: ${data.sessionId}</span>
-            <span>📁 Trace ID: ${data.traceId}</span>
+            <span>🆔 会话ID: ${this.escapeHtml(data.sessionId)}</span>
+            <span>📁 Trace ID: ${this.escapeHtml(data.traceId)}</span>
         </div>
         </div>
         
@@ -845,7 +819,7 @@ export class HTMLReportGenerator {
         <div class="metrics-grid">
             <div class="metric-card">
             <div class="label">总耗时</div>
-            <div class="value" style="color: var(--primary-color);">${(data.metrics.totalDuration / 1000).toFixed(3)}s</div>
+            <div class="value" style="color: var(--primary-color);">${this.formatCellValue(data.metrics.totalDuration)} ms</div>
             </div>
             <div class="metric-card">
             <div class="label">分析轮次</div>
@@ -899,7 +873,7 @@ export class HTMLReportGenerator {
                 <div style="position: absolute; left: -7px; top: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--primary-color); border: 2px solid white;"></div>
                 <div style="font-size: 12px; color: var(--text-light); margin-bottom: 4px;">步骤 ${index + 1} · ${new Date(result.timestamp).toLocaleTimeString('zh-CN')}</div>
                 <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid var(--border-color);">
-                <div style="margin-bottom: 4px;"><strong>Query:</strong> <code style="font-size: 12px; color: var(--text-secondary);">${result.sql.substring(0, 100)}${result.sql.length > 100 ? '...' : ''}</code></div>
+                <div style="margin-bottom: 4px;"><strong>Query:</strong> <code style="font-size: 12px; color: var(--text-secondary);">${this.escapeHtml(result.sql.substring(0, 100))}${result.sql.length > 100 ? '...' : ''}</code></div>
                 <div style="font-size: 12px; color: var(--text-light);">Result: ${result.result.rowCount} rows · ${result.result.durationMs}ms</div>
                 </div>
             </div>
@@ -926,40 +900,6 @@ export class HTMLReportGenerator {
     function toggleSqlBlock(event, sqlBlock) {
       event.stopPropagation();
       sqlBlock.classList.toggle('collapsed');
-    }
-
-    // Copy SQL functionality
-    function copySql(btn) {
-      const sql = btn.getAttribute('data-sql');
-      navigator.clipboard.writeText(sql).then(() => {
-        const originalText = btn.textContent;
-        btn.textContent = '已复制!';
-        setTimeout(() => {
-          btn.textContent = originalText;
-        }, 2000);
-      });
-    }
-
-    // Toggle table rows (show/hide more)
-    function toggleTableRows(btn, hiddenCount) {
-      const tableContainer = btn.parentElement;
-      const table = tableContainer.querySelector('table');
-      const hiddenRows = table.querySelectorAll('.hidden-row');
-
-      if (hiddenRows.length > 0) {
-        const isHidden = hiddenRows[0].style.display === 'none';
-
-        hiddenRows.forEach(row => {
-          row.style.display = isHidden ? '' : 'none';
-        });
-
-        const span = btn.querySelector('span');
-        if (isHidden) {
-          span.innerHTML = '▲ 收起更多';
-        } else {
-          span.innerHTML = '▼ 显示更多 ' + hiddenCount + ' 条记录';
-        }
-      }
     }
 
     // Toggle expandable row details (for iterator results)
@@ -1010,22 +950,6 @@ export class HTMLReportGenerator {
           : '<span class="expand-icon">▼</span> 展开';
       });
     }
-
-    // Legacy copy button handler for backward compatibility
-    document.querySelectorAll('.copy-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        const sql = this.getAttribute('data-sql');
-        if (sql) {
-          navigator.clipboard.writeText(sql).then(() => {
-            const originalText = this.textContent;
-            this.textContent = '已复制!';
-            setTimeout(() => {
-              this.textContent = originalText;
-            }, 2000);
-          });
-        }
-      });
-    });
 
     // 检测表格是否可滚动，添加滚动提示
     function initTableScroll() {
@@ -1128,6 +1052,8 @@ export class HTMLReportGenerator {
       });
     }
   </script>
+<script>${REPORT_DOCUMENT_SCRIPT}</script>
+${REPORT_DOCUMENT_NO_SCRIPT}
 </body>
 </html>`;
   }
@@ -1143,7 +1069,7 @@ export class HTMLReportGenerator {
       <div class="metrics-grid">
         <div class="metric-card">
           <div class="label">分析类型</div>
-          <div class="value">${skillResult.skillName}</div>
+          <div class="value">${this.escapeHtml(skillResult.skillName)}</div>
         </div>
         <div class="metric-card">
           <div class="label">执行耗时</div>
@@ -1168,8 +1094,8 @@ export class HTMLReportGenerator {
       html += `
       <h3 style="margin: 20px 0 15px; font-size: 16px;">诊断结果</h3>
       ${skillResult.diagnostics.map((diag: any) => `
-        <div class="diagnostic ${diag.severity}">
-          <div class="severity">${this.getSeverityLabel(diag.severity)}</div>
+        <div class="diagnostic ${this.escapeHtml(String(diag.severity))}">
+          <div class="severity">${this.escapeHtml(this.getSeverityLabel(diag.severity))}</div>
           <div>${this.escapeHtml(diag.message)}</div>
           ${diag.suggestions ? `
             <ul class="suggestions">
@@ -1224,7 +1150,7 @@ export class HTMLReportGenerator {
           html += `
             <div class="skill-section">
               <div class="section-header">
-                <h3>${data.title || sectionId}</h3>
+                <h3>${this.escapeHtml(data.title || sectionId)}</h3>
                 <span class="count">${data.data.length} 条记录</span>
               </div>
               ${data.sql ? `
@@ -1232,7 +1158,7 @@ export class HTMLReportGenerator {
                   <div class="sql-header">
                     <span class="toggle-icon">▼</span>
                     <span class="title">SQL 查询</span>
-                    <button class="copy-btn" data-sql="${this.escapeHtml(data.sql)}" onclick="event.stopPropagation(); copySql(this)">复制 SQL</button>
+                    <button class="copy-btn" data-sql="${this.escapeHtml(data.sql)}" onclick="copySql(this, event)">复制 SQL</button>
                   </div>
                   <div class="sql-content">
                     <pre>${this.escapeHtml(data.sql)}</pre>
@@ -1248,7 +1174,7 @@ export class HTMLReportGenerator {
           html += `
             <div class="skill-section">
               <div class="section-header">
-                <h3>${data.title || sectionId}</h3>
+                <h3>${this.escapeHtml(data.title || sectionId)}</h3>
               </div>
               <div class="answer-box">
                 ${this.formatAnswer(data.data[0].text)}
@@ -1287,7 +1213,7 @@ export class HTMLReportGenerator {
       <div class="report-card expandable-section" id="${sectionUniqueId}">
         <div class="header" style="background: #f8fafc; padding: 16px; border-bottom: 1px solid var(--border-color);">
            <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-main); display: flex; align-items: center;">
-             ${title}
+             ${this.escapeHtml(title)}
              <span class="badge" style="margin-left: 12px; font-weight: normal; font-size: 12px; background: #e0e7ff; color: #4338ca;">${expandableData.length} 条记录</span>
            </h3>
         </div>
@@ -1305,24 +1231,11 @@ export class HTMLReportGenerator {
 
     // 生成主表格（使用 data.columns 和 data.data）
     if (data.columns && data.data && data.data.length > 0) {
-      // Filter out absolute timestamp columns when relative timestamp columns exist
-      const absoluteTimestampCols = new Set<string>();
-      const filteredColumns = data.columns.filter((col: string) => {
-        if (col.endsWith('_ts') && col !== 'perfetto_start' && col !== 'perfetto_end') {
-          const relCol = col + '_rel';
-          if (data.columns.includes(relCol)) {
-            absoluteTimestampCols.add(col);
-            return false;  // Skip absolute timestamp column
-          }
-        }
-        return true;
-      });
-
       // Detect constant columns (like process_name, layer_name)
       const constantColumns: Array<[string, any]> = [];
       const variableColumns: string[] = [];
 
-      for (const col of filteredColumns) {
+      for (const col of data.columns) {
         const firstValue = data.data[0][col];
         const isConstant = data.data.every((row: any) => row[col] === firstValue);
 
@@ -1336,8 +1249,7 @@ export class HTMLReportGenerator {
       // Build the constant column info for the table header
       // 【P2 Fix】使用可配置的元数据列名代替硬编码
       const constantColumnLabels = columnEntries(constantColumns)
-        .filter(([col]) => this.isMetadataColumn(col))
-        .map(([col, value]) => `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(col)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value, 160))}</strong></span>`)
+        .map(([col, value]) => `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(col)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value))}</strong></span>`)
         .join('');
 
       // 主表格 + 展开行（colspan 横跨所有列）
@@ -1417,8 +1329,6 @@ export class HTMLReportGenerator {
   }): string {
     let html = `<div class="detail-content" style="padding: 15px; border-left: 4px solid #667eea;">`;
 
-    // 不再显示原始 JSON 数据，与前端保持一致
-
     if (!result.success) {
       html += `
         <div class="diagnostic critical">
@@ -1426,7 +1336,8 @@ export class HTMLReportGenerator {
           <div>${this.escapeHtml(result.error || '未知错误')}</div>
         </div>
       `;
-    } else if (result.sections) {
+    }
+    if (result.sections) {
       const sectionsEntries = Object.entries(result.sections);
       const emptySections: string[] = [];
 
@@ -1442,6 +1353,7 @@ export class HTMLReportGenerator {
           // 诊断要点使用更紧凑的表格格式
           if (subSectionId === 'frame_diagnosis' || subTitle.includes('诊断') || subTitle.includes('diagnosis')) {
             html += this.generateDiagnosisTable(subData.data, subTitle);
+            html += `<details><summary>完整诊断数据</summary>${this.renderNestedObject(subData.data)}</details>`;
           } else {
             // 其他 section: 默认展开显示数据表格
             html += `
@@ -1454,6 +1366,8 @@ export class HTMLReportGenerator {
               </div>
             `;
           }
+        } else if (subData.data !== undefined && subData.data !== null) {
+          html += `<h4>${this.escapeHtml(subTitle)}</h4>${this.renderLegacyPayload(subData.data, subData.display)}`;
         } else if (subData.diagnostics && Array.isArray(subData.diagnostics) && subData.diagnostics.length > 0) {
           // 显示诊断结果（以表格形式）
           html += this.generateDiagnosticsAsTable(subData.diagnostics, subTitle);
@@ -1465,7 +1379,7 @@ export class HTMLReportGenerator {
 
       // 所有 section 都为空时显示简洁提示
       if (sectionsEntries.length > 0 && emptySections.length === sectionsEntries.length) {
-        html += `<div style="padding: 12px; color: #666; font-size: 13px;">无详细数据 (${emptySections.join(', ')})</div>`;
+        html += `<div style="padding: 12px; color: #666; font-size: 13px;">无详细数据 (${this.escapeHtml(emptySections.join(', '))})</div>`;
       }
     }
 
@@ -1512,7 +1426,7 @@ export class HTMLReportGenerator {
           <tbody>
             ${diagRows.map(row => `
               <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="padding: 10px 12px; color: ${row.severity === 'critical' ? '#dc2626' : row.severity === 'warning' ? '#d97706' : '#059669'}; font-weight: 500;">
+                <td style="padding: 10px 12px; color: ${row.severity === 'critical' ? '#dc2626' : row.severity === 'warning' ? '#d97706' : '#475569'}; font-weight: 500;">
                   ${this.escapeHtml(row.severity)}
                 </td>
                 <td style="padding: 10px 12px; color: #334155; max-width: 400px; overflow: hidden; text-overflow: ellipsis;">
@@ -1568,7 +1482,7 @@ export class HTMLReportGenerator {
           <tbody>
             ${diagRows.map(row => `
               <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="padding: 10px 12px; color: ${row.severity === 'critical' ? '#dc2626' : row.severity === 'warning' ? '#d97706' : '#059669'}; font-weight: 500;">
+                <td style="padding: 10px 12px; color: ${row.severity === 'critical' ? '#dc2626' : row.severity === 'warning' ? '#d97706' : '#475569'}; font-weight: 500;">
                   ${this.escapeHtml(row.severity)}
                 </td>
                 <td style="padding: 10px 12px; color: #334155;">
@@ -1612,7 +1526,7 @@ export class HTMLReportGenerator {
           <div class="code-block" style="margin-bottom: 16px;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                <span style="font-size: 12px; color: #9ca3af;">SQL Query</span>
-               <button class="copy-btn" data-sql="${this.escapeHtml(result.sql)}" onclick="copySql(this)">Copy</button>
+               <button class="copy-btn" data-sql="${this.escapeHtml(result.sql)}" onclick="copySql(this, event)">Copy</button>
             </div>
             <pre style="margin: 0;">${this.escapeHtml(result.sql)}</pre>
           </div>
@@ -1653,24 +1567,6 @@ export class HTMLReportGenerator {
     const defaultVisibleRows = 10;
     const hasMore = totalRows > defaultVisibleRows;
 
-    // Filter out absolute timestamp columns when relative timestamp columns exist
-    // This makes the report more readable by showing relative times instead of raw nanoseconds
-    const absoluteTimestampCols = new Set<string>();
-    const relativeTimestampCols = new Set<string>();
-
-    for (const col of columns) {
-      if (col.endsWith('_ts') && col !== 'perfetto_start' && col !== 'perfetto_end') {
-        const relCol = col + '_rel';
-        if (columns.includes(relCol)) {
-          absoluteTimestampCols.add(col);
-          relativeTimestampCols.add(relCol);
-        }
-      }
-    }
-
-    // Filter out absolute timestamp columns that have relative counterparts
-    const filteredColumns = columns.filter(col => !absoluteTimestampCols.has(col));
-
     // Detect columns with constant values (like process_name, layer_name)
     // These should be moved to the table header instead of repeating in every row
     // BUT: Only do this for tables with multiple rows - single row tables should show all columns
@@ -1679,9 +1575,9 @@ export class HTMLReportGenerator {
 
     // For single-row tables, show all columns (no point in hiding "constant" columns)
     if (rows.length === 1) {
-      variableColumns.push(...filteredColumns);
+      variableColumns.push(...columns);
     } else {
-      for (const col of filteredColumns) {
+      for (const col of columns) {
         const firstValue = rows[0][col];
         const isConstant = rows.every(row => row[col] === firstValue);
 
@@ -1699,7 +1595,7 @@ export class HTMLReportGenerator {
 
     // Columns removed from each row must remain visible as values shared by all rows.
     const constantColumnLabels = columnEntries(constantColumns)
-      .map(([col, value]) => `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(col)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value, 160))}</strong></span>`)
+      .map(([col, value]) => `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(col)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value))}</strong></span>`)
       .join('');
 
     return `
@@ -1730,9 +1626,9 @@ export class HTMLReportGenerator {
     </tbody>
       </table>
         ${hasMore ? `
-          <div class="table-rows-more" onclick="toggleTableRows(this, ${totalRows - defaultVisibleRows})">
+          <button type="button" class="table-rows-more" onclick="toggleTableRows(this, ${totalRows - defaultVisibleRows})">
             <span>▼ 显示更多 ${totalRows - defaultVisibleRows} 条记录</span>
-          </div>
+          </button>
         ` : ''
       }
     </div>
@@ -1763,37 +1659,22 @@ export class HTMLReportGenerator {
       return this.generateExpandableTableFromEnvelope(envelope, traceStartNs, outputLanguage);
     }
 
-    // Build column definitions (use explicit ones from display, or infer from column names)
-    const columnDefs = display.columns || buildColumnDefinitions(data.columns);
+    // Use producer definitions; undeclared values remain literal.
+    const columnDefs: ColumnDefinition[] = display.columns || data.columns.map(name => ({name, type: 'string' as const}));
 
     const totalRows = data.rows.length;
     const defaultVisibleRows = 10;
     const hasMore = totalRows > defaultVisibleRows;
 
-    // Identify metadata columns (to show in header, not in table)
-    const metadataFields = new Set(display.metadataFields || []);
-    const metadataValues: Array<[string, any]> = [];
-    const displayColumnDefs: ColumnDefinition[] = [];
-
-    for (let i = 0; i < columnDefs.length; i++) {
-      const colDef = columnDefs[i];
-      const colName = colDef.name;
-
-      if (metadataFields.has(colName)) {
-        // Extract metadata value from first row
-        if (data.rows.length > 0) {
-          metadataValues.push([colName, data.rows[0][i]]);
-        }
-      } else if (!colDef.hidden) {
-        displayColumnDefs.push(colDef);
-      }
-    }
+    const {metadata: metadataValues, visible: displayColumnDefs} = this.renderReportMetadata(
+      data.columns, data.rows, columnDefs, display.metadataFields || [],
+    );
 
     // Build the constant column info for the table header
     const metadataLabels = columnEntries(metadataValues)
       .map(([col, value]) => {
         const label = columnDefs.find(d => d.name === col)?.label || col;
-        return `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(label)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value, 160))}</strong></span>`;
+        return `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(label)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value))}</strong></span>`;
       })
       .join('');
 
@@ -1842,45 +1723,73 @@ export class HTMLReportGenerator {
           </tbody>
         </table>
         ${hasMore ? `
-          <div class="table-rows-more" onclick="toggleTableRows(this, ${totalRows - defaultVisibleRows})">
+          <button type="button" class="table-rows-more" onclick="toggleTableRows(this, ${totalRows - defaultVisibleRows})">
             <span>▼ ${localize(outputLanguage, `显示更多 ${totalRows - defaultVisibleRows} 条记录`, `Show ${totalRows - defaultVisibleRows} more rows`)}</span>
-          </div>
+          </button>
         ` : ''}
+      ${this.renderAdditionalColumns(envelope, displayColumnDefs, metadataValues, outputLanguage)}
       </div>
     `;
+  }
+
+  private renderMetricTable(
+    metrics: ReadonlyArray<{label: string; value: unknown; unit?: string; severity?: string}>,
+    outputLanguage: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
+  ): string {
+    if (!metrics.length) return '';
+    return `<table class="report-metric-table"><thead><tr>
+      <th>${localize(outputLanguage, '指标', 'Metric')}</th><th>${localize(outputLanguage, '数值', 'Value')}</th>
+    </tr></thead><tbody>${metrics.map(metric => {
+      const severity = metric.severity === 'critical' ? localize(outputLanguage, '严重', 'Critical')
+        : metric.severity === 'warning' ? localize(outputLanguage, '注意', 'Warning') : '';
+      return `<tr><td>${severity ? `<strong>${severity}</strong> · ` : ''}${this.escapeHtml(metric.label)}</td>
+        <td>${typeof metric.value === 'object' && metric.value !== null ? this.renderNestedObject(metric.value) : this.escapeHtml(String(metric.value))}${this.escapeHtml(metric.unit || '')}</td></tr>`;
+    }).join('')}</tbody></table>`;
   }
 
   private generateSummaryFromEnvelope(
     envelope: DataEnvelope,
     outputLanguage: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
   ): string {
-    const summary = (envelope.data as any)?.summary;
+    const summary = envelope.data.summary;
     if (!summary || typeof summary !== 'object') {
       return `<div class="empty-state">${localize(outputLanguage, '无汇总数据', 'No summary data')}</div>`;
     }
-
-    const title = typeof summary.title === 'string'
-      ? summary.title
+    const title = typeof summary.title === 'string' ? summary.title
       : envelope.display?.title || localize(outputLanguage, '汇总', 'Summary');
-    const content = typeof summary.content === 'string' ? summary.content : '';
     const metrics = Array.isArray(summary.metrics) ? summary.metrics : [];
+    return `<div class="summary-box">
+      <strong>${this.escapeHtml(title)}</strong>
+      ${typeof summary.content === 'string' && summary.content ? `<div>${this.formatAnswer(summary.content)}</div>` : ''}
+      ${this.renderMetricTable(metrics, outputLanguage)}
+    </div>`;
+  }
 
-    return `
-      <div class="summary-box" style="padding: 15px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #3b82f6;">
-        <strong>${this.escapeHtml(title)}</strong>
-        ${content ? `<div style="margin-top: 8px;">${this.formatAnswer(content)}</div>` : ''}
-        ${metrics.length > 0 ? `
-          <div class="metrics-grid" style="margin-top: 12px;">
-            ${metrics.map((metric: any) => `
-              <div class="metric-card">
-                <div class="metric-label label">${this.escapeHtml(metric.label || metric.name || '')}</div>
-                <div class="metric-value value">${this.escapeHtml(this.stringifyValueForDisplay(metric.value, 120))}</div>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-      </div>
-    `;
+  private renderReportMetadata(
+    columns: string[], rows: unknown[][], definitions: ColumnDefinition[], fields: string[],
+  ): {metadata: Array<[string, unknown]>; visible: ColumnDefinition[]} {
+    const indices = new Map(columns.map((name, index) => [name, index]));
+    const metadata: Array<[string, unknown]> = [];
+    const visible: ColumnDefinition[] = [];
+    for (const definition of definitions) {
+      const index = indices.get(definition.name);
+      const first = index === undefined ? undefined : rows[0]?.[index];
+      if (fields.includes(definition.name) && index !== undefined && first !== undefined && first !== null
+        && rows.every(row => row[index] === first)) metadata.push([definition.name, first]);
+      else if (!definition.hidden) visible.push(definition);
+    }
+    return {metadata, visible};
+  }
+
+  private renderAdditionalColumns(
+    envelope: DataEnvelope, visible: ColumnDefinition[], metadata: Array<[string, unknown]>, outputLanguage: OutputLanguage,
+  ): string {
+    const represented = new Set([...visible.map(column => column.name), ...metadata.map(([name]) => name)]);
+    const columns = (envelope.data.columns || []).filter(name => !represented.has(name));
+    if (!columns.length) return '';
+    const rows = this.rowsToObjects(envelope.data.columns || [], envelope.data.rows || []);
+    return `<details class="report-additional-columns"><summary>${localize(outputLanguage, '更多原始列', 'Additional captured columns')}</summary>
+      ${this.generateTable(columns, rows)}</details>`;
   }
 
   private generateTextFromEnvelope(
@@ -1919,29 +1828,17 @@ export class HTMLReportGenerator {
     const rows = data.rows;
     const expandableData = data.expandableData as any[];
 
-    const columnDefs = display.columns || buildColumnDefinitions(columns);
-    const metadataFields = new Set(display.metadataFields || []);
-
-    // Extract metadata values from the first row for configured metadataFields
-    const metadataValues: Array<[string, any]> = [];
-    if (rows.length > 0) {
-      for (let i = 0; i < columnDefs.length; i++) {
-        const colDef = columnDefs[i];
-        if (metadataFields.has(colDef.name)) {
-          metadataValues.push([colDef.name, rows[0][i]]);
-        }
-      }
-    }
+    const columnDefs: ColumnDefinition[] = display.columns || columns.map(name => ({name, type: 'string' as const}));
+    const {metadata: metadataValues, visible: visibleColumnDefs} = this.renderReportMetadata(
+      columns, rows, columnDefs, display.metadataFields || [],
+    );
 
     const metadataLabels = columnEntries(metadataValues)
       .map(([col, value]) => {
         const label = columnDefs.find(d => d.name === col)?.label || col;
-        return `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(label)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value, 160))}</strong></span>`;
+        return `<span style="color: #666; font-size: 12px; margin-left: 8px;">${this.escapeHtml(label)}: <strong>${this.escapeHtml(this.stringifyValueForDisplay(value))}</strong></span>`;
       })
       .join('');
-
-    // Visible columns: exclude metadata + hidden
-    const visibleColumnDefs = columnDefs.filter(cd => !metadataFields.has(cd.name) && !cd.hidden);
 
     const columnIndices = new Map<string, number>();
     columns.forEach((c, idx) => columnIndices.set(c, idx));
@@ -2009,6 +1906,7 @@ export class HTMLReportGenerator {
             </tbody>
           </table>
         </div>
+      ${this.renderAdditionalColumns(envelope, visibleColumnDefs, metadataValues, outputLanguage)}
       </div>
     `;
   }
@@ -2046,120 +1944,63 @@ export class HTMLReportGenerator {
   /**
    * Format a cell value based on column definition
    */
+  private timeValueAsNs(value: unknown, unit: string | undefined): bigint | null {
+    const scale = unit === 'ns' ? 1n : unit === 'us' ? 1000n : unit === 'ms' ? 1000000n : unit === 's' ? 1000000000n : null;
+    if (scale === null || !['string', 'number', 'bigint'].includes(typeof value)) return null;
+    const match = String(value).trim().match(/^([+-]?)([0-9]+)(?:\.([0-9]+))?$/);
+    if (!match) return null;
+    const fraction = match[3] || '';
+    const divisor = 10n ** BigInt(fraction.length);
+    const numerator = (BigInt(match[2]) * divisor + BigInt(fraction || '0')) * scale;
+    if (numerator % divisor !== 0n) return null;
+    return (match[1] === '-' ? -1n : 1n) * numerator / divisor;
+  }
+
+  private formatDurationNs(ns: bigint): string {
+    const absolute = ns < 0n ? -ns : ns;
+    const fraction = (absolute % 1000000n).toString().padStart(6, '0').replace(/0+$/, '');
+    return `${ns < 0n ? '-' : ''}${absolute / 1000000n}${fraction ? '.' + fraction : ''} ms`;
+  }
+
   private formatCellValueFromDefinition(value: any, colDef: ColumnDefinition, traceStartNs: bigint | null): string {
-    if (value === null || value === undefined) {
-      return '<span style="color: #999;">-</span>';
-    }
-
-    if (this.isIdentifierKey(colDef.name)) {
-      return this.escapeHtml(this.normalizeIdentifierDisplay(value));
-    }
-
+    if (value === null || value === undefined) return '<span style="color: #999;">-</span>';
+    if (this.isIdentifierKey(colDef.name)) return this.escapeHtml(this.normalizeIdentifierDisplay(value));
     const format = colDef.format || 'default';
-
-    switch (format) {
-      case 'timestamp_relative': {
-        const ts = this.parseNs(value);
-        if (ts !== null) {
-          const rel = traceStartNs ? ts - traceStartNs : ts;
-          const displayValue = this.formatRelativeSeconds(rel);
-          return `<span title="${this.escapeHtml(ts.toString())}">${this.escapeHtml(displayValue)}</span>`;
-        }
-        break;
-      }
-
-      case 'timestamp_absolute': {
-        const ts = this.parseNs(value);
-        if (ts !== null) {
-          return this.escapeHtml(ts.toString());
-        }
-        break;
-      }
-
-      case 'compact':
-        if (typeof value === 'number') {
-          return this.formatCompactNumber(value);
-        }
-        break;
-
-      case 'percentage':
-        if (typeof value === 'number') {
-          const pct = value > 1 ? value : value * 100;
-          return `${pct.toFixed(1)}%`;
-        }
-        break;
-
-      case 'duration_ms':
-        if (typeof value === 'number') {
-          const unit = colDef.unit || 'ns';
-          const ns = value * (unit === 'ns' ? 1 : unit === 'us' ? 1e3 : unit === 'ms' ? 1e6 : 1e9);
-          return `${(ns / 1e6).toFixed(2)} ms`;
-        }
-        break;
-
-      case 'duration_us':
-        if (typeof value === 'number') {
-          // Keep legacy format key for compatibility, but display in ms.
-          const unit = colDef.unit || 'us';
-          const ns = value * (unit === 'ns' ? 1 : unit === 'us' ? 1e3 : unit === 'ms' ? 1e6 : 1e9);
-          return `${(ns / 1e6).toFixed(2)} ms`;
-        }
-        break;
-
-      case 'bytes_human':
-        if (typeof value === 'number') {
-          return this.formatBytes(value);
-        }
-        break;
-
-      case 'code':
-        return `<code>${this.escapeHtml(String(value))}</code>`;
-
-      case 'truncate':
-        if (typeof value === 'string' && value.length > 50) {
-          return `<span title="${this.escapeHtml(value)}">${this.escapeHtml(value.substring(0, 47))}...</span>`;
-        }
-        break;
+    const time = this.timeValueAsNs(value, colDef.unit);
+    if (format === 'timestamp_absolute' && time !== null) return this.escapeHtml(time.toString());
+    if ((format === 'timestamp_relative' || (format === 'default' && colDef.type === 'timestamp'))
+      && time !== null && traceStartNs !== null) {
+      return `<span title="${this.escapeHtml(time.toString())} ns">${this.formatRelativeSeconds(time - traceStartNs)}</span>`;
     }
-
-    // Type-based defaults when no explicit format is provided.
-    // This keeps HTML report output consistent with the frontend rendering.
-    if (format === 'default') {
-      if (colDef.type === 'timestamp') {
-        const ts = this.parseNs(value);
-        if (ts !== null) {
-          const rel = traceStartNs ? ts - traceStartNs : ts;
-          const displayValue = this.formatRelativeSeconds(rel);
-          return `<span title="${this.escapeHtml(ts.toString())}">${this.escapeHtml(displayValue)}</span>`;
-        }
-      }
-
-      if (colDef.type === 'duration') {
-        const dur = this.parseNs(value);
-        if (dur !== null) {
-          const sign = dur < 0n ? '-' : '';
-          const absNs = dur < 0n ? -dur : dur;
-          const ms = Number(absNs) / 1e6;
-          return `${sign}${ms.toFixed(2)} ms`;
+    if ((format === 'duration_ms' || format === 'duration_us' || (format === 'default' && colDef.type === 'duration')) && time !== null) {
+      return this.formatDurationNs(time);
+    }
+    if (format === 'percentage' && typeof value === 'number') {
+      if (colDef.unit === '%' || colDef.unit === 'percent') return `${value}%`;
+      if (colDef.unit === 'ratio') {
+        // Decimal shift avoids binary-float artifacts such as 0.29 * 100.
+        const match = String(value).match(/^(-?)([0-9]+)(?:\.([0-9]+))?$/);
+        if (match) {
+          const digits = match[2] + (match[3] || '').padEnd(2, '0');
+          const scale = Math.max(0, (match[3] || '').length - 2);
+          const whole = BigInt(digits.slice(0, digits.length - scale) || '0').toString();
+          const fraction = scale ? digits.slice(-scale).replace(/0+$/, '') : '';
+          return `${match[1]}${whole}${fraction ? '.' + fraction : ''}%`;
         }
       }
     }
-
-    // Default formatting based on type
-    if (typeof value === 'number') {
-      return value.toLocaleString('zh-CN');
+    if (format === 'compact' && typeof value === 'number') {
+      return `<span title="${this.escapeHtml(String(value))}">${this.formatCompactNumber(value)}</span>`;
     }
-    if (typeof value === 'boolean') {
-      return value ? '<span style="color: #10b981;">✓</span>' : '<span style="color: #ef4444;">✗</span>';
+    if (format === 'bytes_human' && typeof value === 'number' && colDef.unit === 'B') {
+      return `<span title="${this.escapeHtml(String(value))} B">${this.formatBytes(value)}</span>`;
     }
-
-    const str = typeof value === 'object'
-      ? this.stringifyValueForDisplay(value, 200)
-      : String(value);
-    if (str.length > 200) {
-      return `<span title="${this.escapeHtml(str)}">${this.escapeHtml(str.substring(0, 200))}...</span>`;
+    if (format === 'code') return `<code>${this.escapeHtml(String(value))}</code>`;
+    if (format === 'truncate' && typeof value === 'string' && value.length > 50) {
+      return `<details><summary>${this.escapeHtml(value.slice(0, 47))}...</summary><pre>${this.escapeHtml(value)}</pre></details>`;
     }
-    return this.escapeHtml(str);
+    const content = this.formatCellValue(value, colDef.name);
+    return `${content}${colDef.unit ? ' ' + this.escapeHtml(colDef.unit) : ''}`;
   }
 
   /**
@@ -2206,25 +2047,10 @@ export class HTMLReportGenerator {
    * Format cell value for display
    */
   private formatCellValue(value: any, key?: string): string {
-    if (value === null || value === undefined) {
-      return '<span style="color: #999;">NULL</span>';
-    }
-    if (this.isIdentifierKey(key)) {
-      return this.escapeHtml(this.normalizeIdentifierDisplay(value));
-    }
-    if (typeof value === 'number') {
-      return value.toLocaleString('zh-CN');
-    }
-    if (typeof value === 'boolean') {
-      return value ? '<span style="color: #10b981;">✓</span>' : '<span style="color: #ef4444;">✗</span>';
-    }
-    const str = typeof value === 'object'
-      ? this.stringifyValueForDisplay(value, 200)
-      : String(value);
-    if (str.length > 200) {
-      return `<span title="${this.escapeHtml(str)}">${this.escapeHtml(str.substring(0, 200))}...</span>`;
-    }
-    return this.escapeHtml(str);
+    if (value === null || value === undefined) return '<span style="color: #999;">NULL</span>';
+    if (this.isIdentifierKey(key)) return this.escapeHtml(this.normalizeIdentifierDisplay(value));
+    if (typeof value === 'object') return this.renderNestedObject(value);
+    return this.escapeHtml(String(value));
   }
 
   private getCellClass(value: any): string {
@@ -2268,7 +2094,7 @@ export class HTMLReportGenerator {
       html += `
         <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; font-size: 14px; color: #666;">
           <strong>Skill:</strong> ${this.escapeHtml(metadata.skillName || 'Unknown')}
-          ${metadata.version ? `<span style="margin-left: 15px;"><strong>版本:</strong> ${metadata.version}</span>` : ''}
+          ${metadata.version ? `<span style="margin-left: 15px;"><strong>版本:</strong> ${this.escapeHtml(String(metadata.version))}</span>` : ''}
           ${metadata.executedAt ? `<span style="margin-left: 15px;"><strong>执行时间:</strong> ${new Date(metadata.executedAt).toLocaleString('zh-CN')}</span>` : ''}
         </div>
       `;
@@ -2337,26 +2163,27 @@ export class HTMLReportGenerator {
         const frameEntries = Object.entries(frames as Record<string, any>);
         const frameCount = frameEntries.length;
         const sessionNum = sessionId.replace('session_', '');
+        const sessionDomId = this.nextDomId('deep-session');
 
         html += `
           <div class="deep-session-container" style="margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
-            <div class="deep-session-header" style="padding: 12px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleDeepSession('${sessionId}')">
+            <div class="deep-session-header" style="padding: 12px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleDeepSession('${sessionDomId}')">
               <div>
                 <span class="session-toggle-icon" style="margin-right: 8px;">▼</span>
-                <strong>滑动区间 ${sessionNum}</strong>
+                <strong>滑动区间 ${this.escapeHtml(sessionNum)}</strong>
                 <span style="margin-left: 12px; opacity: 0.9;">${frameCount} 个掉帧</span>
               </div>
-              <button onclick="event.stopPropagation(); toggleAllFramesInDeepSession('${sessionId}')" style="padding: 4px 12px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor: pointer; font-size: 12px;">
+              <button onclick="event.stopPropagation(); toggleAllFramesInDeepSession('${sessionDomId}')" style="padding: 4px 12px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor: pointer; font-size: 12px;">
                 全部展开
               </button>
             </div>
-            <div class="deep-session-content" id="${sessionId}_content" style="padding: 12px;">
+            <div class="deep-session-content" id="${sessionDomId}_content" style="padding: 12px;">
         `;
 
         frameEntries.forEach(([frameId, stepResult]) => {
           const result = stepResult as any;
           const frameTitle = result.display?.title || frameId;
-          const uniqueFrameId = `${sessionId}_${frameId}`;
+          const uniqueFrameId = this.nextDomId('deep-frame');
 
           html += `
               <div class="deep-frame-item" style="margin-bottom: 8px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
@@ -2387,160 +2214,49 @@ export class HTMLReportGenerator {
   /**
    * Render a single step result from layered output
    */
-  private renderStepResult(stepId: string, stepResult: any): string {
-    if (!stepResult || !stepResult.data) {
-      console.log(`[renderStepResult] ${stepId}: No data available`);
-      return '';
-    }
-
-    console.log(`[renderStepResult] ${stepId}: data type=${typeof stepResult.data}, isArray=${Array.isArray(stepResult.data)}, length=${stepResult.data?.length || 'N/A'}`);
-
-    // 先判断数据格式，确定是否有可渲染的内容
-    let contentHtml = '';
-    let hasRenderableContent = false;
-
-    // 显示错误信息（如果有）
-    if (stepResult.error) {
-      console.log(`[renderStepResult] ${stepId}: Step failed with error:`, stepResult.error);
-      contentHtml += `
-        <div style="padding: 12px; background: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; margin-bottom: 10px;">
-          <div style="font-weight: 600; color: #dc2626; margin-bottom: 4px;">错误信息:</div>
-          <div style="font-family: monospace; font-size: 13px; color: #991b1b; white-space: pre-wrap;">${this.escapeHtml(String(stepResult.error))}</div>
-        </div>
-      `;
-      hasRenderableContent = true;
-    }
-
-    // 处理 displayResults 格式（来自 deep 层 iterator 结果）
-    if (Array.isArray(stepResult.data) && stepResult.data.length > 0) {
-      const firstItem = stepResult.data[0];
-
-      console.log(`[renderStepResult] ${stepId}: First item:`, JSON.stringify({
-        keys: Object.keys(firstItem || {}),
-        hasStepId: !!firstItem?.stepId,
-        hasTitle: !!firstItem?.title,
-        sample: firstItem
-      }, null, 2));
-
-      // 如果是 displayResults 格式，渲染为子区块
-      if (firstItem.stepId || firstItem.title) {
-        console.log(`[renderStepResult] ${stepId}: Using displayResult format (has stepId or title)`);
-        for (const displayResult of stepResult.data) {
-          contentHtml += this.renderDisplayResult(displayResult);
-        }
-        hasRenderableContent = true;
+  private renderLegacyPayload(payload: any, display?: any): string {
+    if (payload === null || payload === undefined) return '<div class="empty-state">未返回可展示数据</div>';
+    if (Array.isArray(payload)) {
+      if (!payload.length) return '<div class="empty-state">无数据</div>';
+      const first = payload[0];
+      if (first && typeof first === 'object' && first.data !== undefined && (first.stepId || first.title)) {
+        return payload.map(item => this.renderDisplayResult(item)).join('');
       }
-      // 如果是普通数据数组，渲染为表格
-      else {
-        const columns = Object.keys(firstItem);
-        console.log(`[renderStepResult] ${stepId}: Using table format, columns:`, columns);
-        contentHtml += this.generateTable(columns, stepResult.data);
-        hasRenderableContent = true;
-      }
+      return this.renderDataTable(payload.slice(0, 10), payload.slice(10));
     }
-    // 处理空数组（失败的 SQL 查询或无结果）
-    else if (Array.isArray(stepResult.data)) {
-      console.log(`[renderStepResult] ${stepId}: Empty array, showing 'No data' message`);
-      const message = stepResult.error ? '查询失败' : '无数据';
-      contentHtml += `<div class="empty-state" style="padding: 20px; background: #f8f9fa; border-radius: 8px; color: #666;">${message}</div>`;
-      hasRenderableContent = true;
-    }
-    // 处理文本格式
-    else if (stepResult.data?.text) {
-      console.log(`[renderStepResult] ${stepId}: Using text format`);
-      contentHtml += `
-        <div class="answer-box">
-          ${this.formatAnswer(stepResult.data.text)}
-        </div>
-      `;
-      hasRenderableContent = true;
-    }
-    // 处理 deep 层帧分析格式 (transformed data with diagnosis_summary and full_analysis)
-    else if (stepResult.data?.diagnosis_summary !== undefined || stepResult.data?.full_analysis) {
-      console.log(`[renderStepResult] ${stepId}: Using deep frame analysis format`);
-      contentHtml += this.renderDeepFrameAnalysis(stepResult.data);
-      hasRenderableContent = true;
-    }
-    else {
-      console.log(`[renderStepResult] ${stepId}: Unknown format, skipping empty section. data:`, typeof stepResult.data, stepResult.data);
-      // 不渲染空容器
-    }
-
-    // 只有在有可渲染内容时才创建容器
-    if (!hasRenderableContent) {
-      return '';
-    }
-
-    return `
-      <div class="report-card">
-        <div class="div-section" style="padding: 16px; border-bottom: 1px solid var(--border-color);">
-          <div class="section-title" style="font-size: 15px;">
-            ${this.escapeHtml(stepResult.display?.title || stepId)}
-            ${Array.isArray(stepResult.data) ? `<span style="font-weight: normal; color: var(--text-secondary); font-size: 12px; margin-left: 8px;">(${stepResult.data.length} 条记录)</span>` : ''}
-            ${stepResult.success === false ? `<span class="badge" style="background: var(--danger-bg); color: var(--danger-color); margin-left: 8px;">失败</span>` : ''}
-          </div>
-        </div>
-        <div style="padding: 16px;">
-          ${contentHtml}
-        </div>
-      </div>
-    `;
+    if (typeof payload !== 'object') return this.formatCellValue(payload);
+    let html = '';
+    if (payload.summary) html += this.generateSummaryFromEnvelope({data: payload, display} as DataEnvelope);
+    if (Array.isArray(payload.columns) && Array.isArray(payload.rows)) {
+      html += this.generateTable(payload.columns, this.rowsToObjects(payload.columns, payload.rows));
+    } else if (typeof payload.text === 'string') html += this.formatAnswer(payload.text);
+    else if (payload.diagnosis_summary !== undefined || payload.full_analysis) html += this.renderDeepFrameAnalysis(payload);
+    if (!html) html = this.renderNestedObject(payload);
+    return html;
   }
 
-  /**
-   * Render a single displayResult from layered output
-   */
-  private renderDisplayResult(displayResult: any): string {
-    console.log(`[renderDisplayResult] displayResult:`, JSON.stringify({
-      hasStepId: !!displayResult.stepId,
-      hasTitle: !!displayResult.title,
-      hasData: !!displayResult.data,
-      dataType: typeof displayResult.data,
-      dataIsArray: Array.isArray(displayResult.data),
-      dataHasRows: !!displayResult.data?.rows,
-      dataHasText: !!displayResult.data?.text,
-      dataKeys: displayResult.data ? Object.keys(displayResult.data) : [],
-    }, null, 2));
-
-    // 先判断是否有可渲染的内容
-    let contentHtml = '';
-
-    if (displayResult.data) {
-      // 如果有 rows，渲染为表格
-      if (displayResult.data.rows && Array.isArray(displayResult.data.rows)) {
-        const columns = displayResult.data.columns || [];
-        const tableData = this.rowsToObjects(columns, displayResult.data.rows);
-        contentHtml = this.generateTable(columns, tableData);
-      }
-      // 如果有 text，渲染为文本
-      else if (displayResult.data.text) {
-        contentHtml = `<div style="font-size: 13px; line-height: 1.6;">${this.formatAnswer(displayResult.data.text)}</div>`;
-      }
-      else {
-        console.log(`[renderDisplayResult] No matching format for data, skipping:`, typeof displayResult.data, displayResult.data);
-      }
-    }
-    else {
-      console.log(`[renderDisplayResult] No data in displayResult, skipping`);
-    }
-
-    // 如果没有可渲染的内容，返回空字符串
-    if (!contentHtml) {
-      return '';
-    }
-
-    return `
-      <div style="margin: 12px 0; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border-color);">
-        <div style="padding: 10px 16px; border-bottom: 1px solid var(--border-color); background: #f1f5f9; border-radius: 6px 6px 0 0;">
-          <h5 style="margin: 0; font-size: 14px; font-weight: 600; color: #334155;">
-            ${this.escapeHtml(displayResult.title || displayResult.stepId || '详情')}
-          </h5>
-        </div>
-        <div style="padding: 12px;">
-          ${contentHtml}
+  private renderStepResult(stepId: string, stepResult: any): string {
+    if (!stepResult) return '';
+    const failed = stepResult.success === false;
+    return `<div class="report-card">
+      <div class="div-section" style="padding:16px;border-bottom:1px solid #e5e7eb">
+        <div class="section-title">${this.escapeHtml(stepResult.display?.title || stepId)}
+          ${failed ? '<span class="badge">失败</span>' : ''}
         </div>
       </div>
-    `;
+      <div style="padding:16px">
+        ${failed && stepResult.error ? `<p>${this.escapeHtml(stepResult.error)}</p>` : ''}
+        ${this.renderLegacyPayload(stepResult.data, stepResult.display)}
+      </div>
+    </div>`;
+  }
+
+  private renderDisplayResult(displayResult: any): string {
+    if (!displayResult) return '';
+    return `<div style="margin:12px 0;border:1px solid #e5e7eb;border-radius:6px">
+      <h5 style="padding:10px 16px">${this.escapeHtml(displayResult.title || displayResult.stepId || '详情')}</h5>
+      <div style="padding:12px">${this.renderLegacyPayload(displayResult.data, {title: displayResult.title})}</div>
+    </div>`;
   }
 
   private renderDeepFrameAnalysis(data: { diagnosis_summary?: string; full_analysis?: any }): string {
@@ -2548,12 +2264,12 @@ export class HTMLReportGenerator {
     const diagnosis = data.diagnosis_summary || '暂无诊断';
     const analysis = data.full_analysis || {};
     const quadrants = analysis.quadrants || {};
-    const binderCalls = analysis.binder_calls || [];
+    const binderCalls = Array.isArray(analysis.binder_calls) ? analysis.binder_calls : [];
     const cpuFreq = analysis.cpu_frequency || {};
-    const mainSlices = analysis.main_thread_slices || [];
-    const renderSlices = analysis.render_thread_slices || [];
-    const freqTimeline = analysis.cpu_freq_timeline || [];
-    const lockContentions = analysis.lock_contentions || [];
+    const mainSlices = Array.isArray(analysis.main_thread_slices) ? analysis.main_thread_slices : [];
+    const renderSlices = Array.isArray(analysis.render_thread_slices) ? analysis.render_thread_slices : [];
+    const freqTimeline = Array.isArray(analysis.cpu_freq_timeline) ? analysis.cpu_freq_timeline : [];
+    const lockContentions = Array.isArray(analysis.lock_contentions) ? analysis.lock_contentions : [];
 
     let html = '';
 
@@ -2569,8 +2285,8 @@ export class HTMLReportGenerator {
 
       if (quadrants.main_thread) {
         const mt = quadrants.main_thread;
-        const runningPct = ((mt.q1 || 0) + (mt.q2 || 0)).toFixed(1);
-        const waitingPct = ((mt.q3 || 0) + (mt.q4 || 0)).toFixed(1);
+        const runningPct = typeof mt.q1 === 'number' && typeof mt.q2 === 'number' ? String(mt.q1 + mt.q2) : '-';
+        const waitingPct = typeof mt.q3 === 'number' && typeof mt.q4 === 'number' ? String(mt.q3 + mt.q4) : '-';
         html += `
           <div style="margin-bottom: 12px;">
             <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: #2c3e50;">
@@ -2582,11 +2298,11 @@ export class HTMLReportGenerator {
                 <div style="padding: 6px 10px; background: #f1f5f9; font-size: 12px; font-weight: 600; color: #475569; text-align: center; border-bottom: 1px solid #e2e8f0;">Running (运行中)</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #e2e8f0;">
                   <div style="padding: 12px 8px; background: #dcfce7; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #166534;">${mt.q1?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #166534;">${this.formatCellValue(mt.q1)}%</div>
                     <div style="font-size: 11px; color: #166534;">大核</div>
                   </div>
                   <div style="padding: 12px 8px; background: #dbeafe; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #1e40af;">${mt.q2?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #1e40af;">${this.formatCellValue(mt.q2)}%</div>
                     <div style="font-size: 11px; color: #1e40af;">小核</div>
                   </div>
                 </div>
@@ -2595,11 +2311,11 @@ export class HTMLReportGenerator {
                 <div style="padding: 6px 10px; background: #f1f5f9; font-size: 12px; font-weight: 600; color: #475569; text-align: center; border-bottom: 1px solid #e2e8f0;">Waiting (等待中)</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #e2e8f0;">
                   <div style="padding: 12px 8px; background: #fef9c3; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #854d0e;">${mt.q3?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #854d0e;">${this.formatCellValue(mt.q3)}%</div>
                     <div style="font-size: 11px; color: #854d0e;">Runnable</div>
                   </div>
                   <div style="padding: 12px 8px; background: #f3e8ff; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #6b21a8;">${mt.q4?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #6b21a8;">${this.formatCellValue(mt.q4)}%</div>
                     <div style="font-size: 11px; color: #6b21a8;">Sleeping</div>
                   </div>
                 </div>
@@ -2611,8 +2327,8 @@ export class HTMLReportGenerator {
 
       if (quadrants.render_thread) {
         const rt = quadrants.render_thread;
-        const runningPct = ((rt.q1 || 0) + (rt.q2 || 0)).toFixed(1);
-        const waitingPct = ((rt.q3 || 0) + (rt.q4 || 0)).toFixed(1);
+        const runningPct = typeof rt.q1 === 'number' && typeof rt.q2 === 'number' ? String(rt.q1 + rt.q2) : '-';
+        const waitingPct = typeof rt.q3 === 'number' && typeof rt.q4 === 'number' ? String(rt.q3 + rt.q4) : '-';
         html += `
           <div style="margin-bottom: 12px;">
             <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: #2c3e50;">
@@ -2624,11 +2340,11 @@ export class HTMLReportGenerator {
                 <div style="padding: 6px 10px; background: #f1f5f9; font-size: 12px; font-weight: 600; color: #475569; text-align: center; border-bottom: 1px solid #e2e8f0;">Running (运行中)</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #e2e8f0;">
                   <div style="padding: 12px 8px; background: #dcfce7; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #166534;">${rt.q1?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #166534;">${this.formatCellValue(rt.q1)}%</div>
                     <div style="font-size: 11px; color: #166534;">大核</div>
                   </div>
                   <div style="padding: 12px 8px; background: #dbeafe; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #1e40af;">${rt.q2?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #1e40af;">${this.formatCellValue(rt.q2)}%</div>
                     <div style="font-size: 11px; color: #1e40af;">小核</div>
                   </div>
                 </div>
@@ -2637,11 +2353,11 @@ export class HTMLReportGenerator {
                 <div style="padding: 6px 10px; background: #f1f5f9; font-size: 12px; font-weight: 600; color: #475569; text-align: center; border-bottom: 1px solid #e2e8f0;">Waiting (等待中)</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #e2e8f0;">
                   <div style="padding: 12px 8px; background: #fef9c3; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #854d0e;">${rt.q3?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #854d0e;">${this.formatCellValue(rt.q3)}%</div>
                     <div style="font-size: 11px; color: #854d0e;">Runnable</div>
                   </div>
                   <div style="padding: 12px 8px; background: #f3e8ff; text-align: center;">
-                    <div style="font-size: 20px; font-weight: 700; color: #6b21a8;">${rt.q4?.toFixed(1) || 0}%</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #6b21a8;">${this.formatCellValue(rt.q4)}%</div>
                     <div style="font-size: 11px; color: #6b21a8;">Sleeping</div>
                   </div>
                 </div>
@@ -2671,9 +2387,9 @@ export class HTMLReportGenerator {
               ${binderCalls.map((b: any) => `
                 <tr>
                   <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">${this.escapeHtml(b.server_process || '')}</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${b.call_count || 0}</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${(b.total_ms || 0).toFixed(2)} ms</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${(b.max_ms || 0).toFixed(2)} ms</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(b.call_count)}</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(b.total_ms)} ms</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(b.max_ms)} ms</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2688,11 +2404,11 @@ export class HTMLReportGenerator {
           <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: #2c3e50;">CPU 频率</div>
           <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
             <div style="padding: 10px; background: #fee2e2; border-radius: 6px; text-align: center;">
-              <div style="font-size: 18px; font-weight: 700; color: #991b1b;">${cpuFreq.big_avg_mhz || 0} MHz</div>
+              <div style="font-size: 18px; font-weight: 700; color: #991b1b;">${this.formatCellValue(cpuFreq.big_avg_mhz)} MHz</div>
               <div style="font-size: 12px; color: #991b1b;">大核平均频率</div>
             </div>
             <div style="padding: 10px; background: #e0e7ff; border-radius: 6px; text-align: center;">
-              <div style="font-size: 18px; font-weight: 700; color: #3730a3;">${cpuFreq.little_avg_mhz || 0} MHz</div>
+              <div style="font-size: 18px; font-weight: 700; color: #3730a3;">${this.formatCellValue(cpuFreq.little_avg_mhz)} MHz</div>
               <div style="font-size: 12px; color: #3730a3;">小核平均频率</div>
             </div>
           </div>
@@ -2713,11 +2429,11 @@ export class HTMLReportGenerator {
               </tr>
             </thead>
             <tbody>
-              ${mainSlices.slice(0, 5).map((s: any) => `
+              ${mainSlices.map((s: any) => `
                 <tr>
                   <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">${this.escapeHtml(s.name || '')}</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${(s.total_ms || 0).toFixed(2)} ms</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${s.count || 1}</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(s.total_ms)} ms</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(s.count)}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2740,12 +2456,12 @@ export class HTMLReportGenerator {
               </tr>
             </thead>
             <tbody>
-              ${renderSlices.slice(0, 5).map((s: any) => `
+              ${renderSlices.map((s: any) => `
                 <tr>
                   <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">${this.escapeHtml(s.name || '')}</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${(s.total_ms || 0).toFixed(2)} ms</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${s.count || 1}</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${(s.max_ms || 0).toFixed(2)} ms</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(s.total_ms)} ms</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(s.count)}</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(s.max_ms)} ms</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2762,20 +2478,19 @@ export class HTMLReportGenerator {
             <span style="font-weight: 400; font-size: 12px; color: #64748b;">(${freqTimeline.length} 次变化)</span>
           </div>
           <div style="font-size: 12px; line-height: 1.6; background: #f8fafc; padding: 10px; border-radius: 6px; max-height: 150px; overflow-y: auto;">
-            ${freqTimeline.slice(0, 20).map((f: any) => {
+            ${freqTimeline.map((f: any) => {
         const changeIcon = f.change_direction === 'up' ? '↑' : (f.change_direction === 'down' ? '↓' : '→');
         const changeColor = f.change_direction === 'up' ? '#16a34a' : (f.change_direction === 'down' ? '#dc2626' : '#64748b');
         const coreColor = f.core_type === 'big' ? '#991b1b' : '#3730a3';
         return `
                 <div style="margin-bottom: 4px;">
-                  <span style="color: #64748b;">+${(f.relative_ms || 0).toFixed(1)}ms</span>
-                  <span style="margin-left: 8px; color: ${coreColor}; font-weight: 500;">C${f.cpu}</span>
+                  <span style="color: #64748b;">+${this.formatCellValue(f.relative_ms)}ms</span>
+                  <span style="margin-left: 8px; color: ${coreColor}; font-weight: 500;">C${this.escapeHtml(String(f.cpu))}</span>
                   <span style="color: ${changeColor}; margin-left: 4px;">${changeIcon}</span>
-                  <span style="margin-left: 4px;">${f.prev_freq_mhz || f.freq_mhz}→${f.freq_mhz} MHz</span>
+                  <span style="margin-left: 4px;">${this.formatCellValue(f.prev_freq_mhz)}→${this.escapeHtml(String(f.freq_mhz))} MHz</span>
                 </div>
               `;
       }).join('')}
-            ${freqTimeline.length > 20 ? `<div style="color: #64748b; font-style: italic;">... 还有 ${freqTimeline.length - 20} 次变化</div>` : ''}
           </div>
         </div>
       `;
@@ -2795,11 +2510,11 @@ export class HTMLReportGenerator {
               </tr>
             </thead>
             <tbody>
-              ${lockContentions.slice(0, 5).map((l: any) => `
+              ${lockContentions.map((l: any) => `
                 <tr>
                   <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${this.escapeHtml(l.blocking_method || '')}</td>
                   <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">${this.escapeHtml(l.blocking_thread_name || '')}</td>
-                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${(l.wait_ms || 0).toFixed(2)} ms</td>
+                  <td style="padding: 8px; text-align: right; border-bottom: 1px solid #e2e8f0;">${this.formatCellValue(l.wait_ms)} ms</td>
                   <td style="padding: 8px; text-align: center; border-bottom: 1px solid #e2e8f0;">${l.main_blocked ? '⚠️' : ''}</td>
                 </tr>
               `).join('')}
@@ -2809,7 +2524,7 @@ export class HTMLReportGenerator {
       `;
     }
 
-    return html;
+    return html + `<details><summary>完整帧分析数据</summary>${this.renderNestedObject(data)}</details>`;
   }
 
   /**
@@ -2953,6 +2668,7 @@ export class HTMLReportGenerator {
       text-align: center; padding: 20px; color: #666;
       font-size: 14px; background: #f8f9fa;
     }
+    ${REPORT_LAYOUT_FIX_CSS}
   </style>
 </head>
 <body>
@@ -2962,7 +2678,7 @@ export class HTMLReportGenerator {
       <div class="meta">
         <span class="badge badge-agent">Agent Mode</span>
         <span>📅 ${new Date(timestamp).toLocaleString('zh-CN')}</span>
-        <span>📁 Trace ID: ${traceId}</span>
+        <span>📁 Trace ID: ${this.escapeHtml(traceId)}</span>
         <span>⏱️ ${(executionTimeMs / 1000).toFixed(2)}s</span>
       </div>
     </div>
@@ -2983,7 +2699,7 @@ export class HTMLReportGenerator {
           <div class="label">LLM 调用</div>
         </div>
         <div class="metric-card">
-          <div class="value">${(executionTimeMs / 1000).toFixed(1)}s</div>
+          <div class="value">${this.formatCellValue(executionTimeMs)} ms</div>
           <div class="label">总耗时</div>
         </div>
       </div>
@@ -3000,8 +2716,8 @@ export class HTMLReportGenerator {
           ${intent.aspects.map(a => `<span class="aspect-tag">${this.escapeHtml(a)}</span>`).join('')}
         </div>
         <div style="margin-top: 10px; font-size: 13px; color: #666;">
-          <span>输出类型: <strong>${intent.expectedOutputType}</strong></span>
-          <span style="margin-left: 15px;">复杂度: <strong>${intent.complexity}</strong></span>
+          <span>输出类型: <strong>${this.escapeHtml(intent.expectedOutputType)}</strong></span>
+          <span style="margin-left: 15px;">复杂度: <strong>${this.escapeHtml(intent.complexity)}</strong></span>
         </div>
       </div>
     </div>
@@ -3064,6 +2780,8 @@ export class HTMLReportGenerator {
       }
     }
   </script>
+<script>${REPORT_DOCUMENT_SCRIPT}</script>
+${REPORT_DOCUMENT_NO_SCRIPT}
 </body>
 </html>`;
   }
@@ -3103,7 +2821,7 @@ export class HTMLReportGenerator {
 
   private renderFinding(finding: Finding): string {
     return `
-      <div class="finding ${finding.severity}">
+      <div class="finding ${this.escapeHtml(String(finding.severity))}">
         <div class="title">${this.escapeHtml(finding.title)}</div>
         <div class="finding-description">${this.markdownToHtml(finding.description)}</div>
         ${(finding.evidence?.length || 0) > 0 ? `
@@ -3207,6 +2925,7 @@ export class HTMLReportGenerator {
     .eval-item .score { font-size: 32px; font-weight: 700; }
     .eval-item .label { font-size: 13px; color: #666; }
     .footer { padding: 20px; text-align: center; color: #999; font-size: 13px; background: #f8f9fa; }
+    ${REPORT_LAYOUT_FIX_CSS}
   </style>
 </head>
 <body>
@@ -3224,7 +2943,7 @@ export class HTMLReportGenerator {
       <h2 class="section-title">执行概览</h2>
       <div class="metrics">
         <div class="metric-card">
-          <div class="value">${(totalDuration / 1000).toFixed(1)}s</div>
+          <div class="value">${this.formatCellValue(totalDuration)} ms</div>
           <div class="label">总耗时</div>
         </div>
         <div class="metric-card">
@@ -3327,6 +3046,8 @@ export class HTMLReportGenerator {
       <p style="margin-top: 5px; font-size: 12px;">Powered by Pipeline + Evaluator Architecture</p>
     </div>
   </div>
+<script>${REPORT_DOCUMENT_SCRIPT}</script>
+${REPORT_DOCUMENT_NO_SCRIPT}
 </body>
 </html>`;
   }
@@ -3549,7 +3270,7 @@ export class HTMLReportGenerator {
    */
   private renderOverviewData(overview: any): string {
     let html = '';
-    const metrics: Array<{ label: string; value: string; color: string }> = [];
+    const metrics: Array<{label: string; value: unknown}> = [];
 
     for (const [key, value] of Object.entries(overview)) {
       if (value === null || value === undefined) continue;
@@ -3574,7 +3295,7 @@ export class HTMLReportGenerator {
 
         if (items.length > 0) {
           // Render StepResult as a table
-          const tableId = `overview-table-${key}`.replace(/[^a-zA-Z0-9-]/g, '-');
+          const tableId = this.nextDomId('overview-table');
           html += `
             <div style="margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
               <div style="background: #ecfdf5; padding: 10px 16px; font-weight: 600; color: #065f46;">
@@ -3589,29 +3310,7 @@ export class HTMLReportGenerator {
         continue;
       }
 
-      // Simple value format
-      const label = this.formatMetricLabel(key);
-      let displayValue: string;
-      let color = '#10b981';
-
-      if (typeof value === 'number') {
-        // Format numbers nicely
-        if (key.toLowerCase().includes('rate') || key.toLowerCase().includes('percent')) {
-          displayValue = `${(value * 100).toFixed(1)}%`;
-          color = value > 0.1 ? '#ef4444' : value > 0.05 ? '#f59e0b' : '#10b981';
-        } else if (key.toLowerCase().includes('duration') || key.toLowerCase().includes('time') || key.toLowerCase().includes('ms')) {
-          displayValue = `${value.toFixed(2)}ms`;
-        } else {
-          displayValue = value.toLocaleString();
-        }
-      } else if (typeof value === 'boolean') {
-        displayValue = value ? '✅' : '❌';
-        color = value ? '#10b981' : '#ef4444';
-      } else {
-        displayValue = String(value);
-      }
-
-      metrics.push({ label, value: displayValue, color });
+      metrics.push({label: key, value});
     }
 
     // Render simple metrics as cards
@@ -3624,14 +3323,7 @@ export class HTMLReportGenerator {
             (${metrics.length} 项)
           </span>
         </div>
-        <div class="metrics-grid">
-          ${metrics.map(m => `
-            <div class="metric-card">
-              <div class="label">${m.label}</div>
-              <div class="value" style="color: ${m.color};">${m.value}</div>
-            </div>
-          `).join('')}
-        </div>
+        ${this.renderMetricTable(metrics)}
       </div>
       `;
     }
@@ -3645,7 +3337,7 @@ export class HTMLReportGenerator {
    * 1. Direct array format: { key: [...] }
    * 2. StepResult format: { stepId: { stepId, data: [...], display } }
    */
-  private renderListData(list: any, stageId: string): string {
+  private renderListData(list: any, _stageId: string): string {
     // 先收集所有表格内容
     const tableContents: string[] = [];
 
@@ -3698,19 +3390,14 @@ export class HTMLReportGenerator {
         continue;
       }
 
-      const tableId = `table-${stageId}-${key}`.replace(/[^a-zA-Z0-9-]/g, '-');
+      const tableId = this.nextDomId('layered-table');
       const previewCount = Math.min(5, items.length);
 
       tableContents.push(`
         <div style="margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
           <div style="background: #f3f4f6; padding: 10px 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
             <span>${this.escapeHtml(displayName)} (${items.length} 条)</span>
-            ${items.length > previewCount ? `
-              <button onclick="document.getElementById('${tableId}').classList.toggle('expanded'); this.textContent = this.textContent.includes('展开') ? '收起' : '展开全部 (${items.length})';"
-                      style="background: #10b981; color: white; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
-                展开全部 (${items.length})
-              </button>
-            ` : ''}
+
           </div>
           <div id="${tableId}" style="max-height: 300px; overflow: auto;">
             <style>#${tableId}.expanded { max-height: none !important; }</style>
@@ -3751,7 +3438,7 @@ export class HTMLReportGenerator {
         Object.keys(item).forEach(k => columns.add(k));
       }
     });
-    const columnList = Array.from(columns).slice(0, 10); // Limit to 10 columns
+    const columnList = Array.from(columns);
 
     if (columnList.length === 0) {
       // Simple list rendering for non-object items
@@ -3766,6 +3453,7 @@ export class HTMLReportGenerator {
               `).join('')}
             </tbody>
           </table>
+          ${hiddenItems.length ? `<button type="button" class="table-rows-more" onclick="toggleTableRows(this)">显示更多 ${hiddenItems.length} 条记录</button>` : ''}
         </div>
       `;
     }
@@ -3783,6 +3471,7 @@ export class HTMLReportGenerator {
             ${hiddenItems.map(item => this.renderTableRow(item, columnList, true)).join('')}
           </tbody>
         </table>
+        ${hiddenItems.length ? `<button type="button" class="table-rows-more" onclick="toggleTableRows(this)">显示更多 ${hiddenItems.length} 条记录</button>` : ''}
       </div>
     `;
   }
@@ -3791,6 +3480,9 @@ export class HTMLReportGenerator {
    * Render a single table row
    */
   private renderTableRow(item: any, columns: string[], hidden: boolean): string {
+    if (item === null || typeof item !== 'object') {
+      return `<tr class="${hidden ? 'hidden-row' : ''}" style="${hidden ? 'display:none;' : ''}"><td colspan="${columns.length}">${this.formatCellValue(item)}</td></tr>`;
+    }
     return `
       <tr style="${hidden ? 'display: none;' : ''}" class="${hidden ? 'hidden-row' : ''}">
         ${columns.map(col => {
@@ -3807,100 +3499,22 @@ export class HTMLReportGenerator {
    * Format a cell value for display in layered data tables (with key-based formatting)
    */
   private formatLayeredCellValue(value: any, key: string): string {
-    if (value === null || value === undefined) return '<span style="color: #9ca3af;">-</span>';
-    if (this.isIdentifierKey(key)) {
-      return this.escapeHtml(this.normalizeIdentifierDisplay(value));
-    }
-
-    if (typeof value === 'number') {
-      const lowerKey = key.toLowerCase();
-      if (lowerKey.includes('ns') || lowerKey.includes('_ns')) {
-        return `${(value / 1_000_000).toFixed(2)}ms`;
-      }
-      if (lowerKey.includes('duration') || lowerKey.includes('time') || lowerKey.includes('ms')) {
-        return `${value.toFixed(2)}ms`;
-      }
-      if (lowerKey.includes('rate') || lowerKey.includes('percent')) {
-        // If value is already a percentage (e.g., 6.07), don't multiply
-        if (value > 1) {
-          return `${value.toFixed(2)}%`;
-        }
-        return `${(value * 100).toFixed(1)}%`;
-      }
-      return value.toLocaleString();
-    }
-
-    if (typeof value === 'boolean') {
-      return value ? '<span style="color: #10b981;">✓</span>' : '<span style="color: #ef4444;">✗</span>';
-    }
-
-    if (Array.isArray(value)) {
-      return `[${value.length} items]`;
-    }
-
-    if (typeof value === 'object') {
-      return '{...}';
-    }
-
-    return this.escapeHtml(String(value).substring(0, 100));
+    return this.formatCellValue(value, key);
   }
 
-  /**
-   * Render a nested object as a formatted HTML string
-   * Used for displaying complex nested structures in a readable format
-   */
-  private renderNestedObject(obj: any): string {
-    if (obj === null || obj === undefined) {
-      return '<span style="color: #9ca3af;">-</span>';
+  private renderNestedObject(value: unknown): string {
+    try {
+      const json = JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? String(item) : item, 2);
+      return `<pre class="report-value-json">${this.escapeHtml(json)}</pre>`;
+    } catch {
+      return `<span>${this.escapeHtml(String(value))}</span>`;
     }
-
-    if (typeof obj !== 'object') {
-      return this.escapeHtml(String(obj));
-    }
-
-    if (Array.isArray(obj)) {
-      if (obj.length === 0) {
-        return '<span style="color: #9ca3af;">[]</span>';
-      }
-      // Render array items
-      return `
-        <div style="padding-left: 12px; border-left: 2px solid #e2e8f0;">
-          ${obj.slice(0, 5).map((item, idx) => `
-            <div style="margin-bottom: 4px;">
-              <span style="color: #6b7280; font-size: 11px;">[${idx}]</span>
-              ${typeof item === 'object' ? this.renderNestedObject(item) : this.escapeHtml(String(item))}
-            </div>
-          `).join('')}
-          ${obj.length > 5 ? `<div style="color: #9ca3af; font-size: 12px;">... 还有 ${obj.length - 5} 项</div>` : ''}
-        </div>
-      `;
-    }
-
-    // Render object key-value pairs
-    const entries = Object.entries(obj);
-    if (entries.length === 0) {
-      return '<span style="color: #9ca3af;">{}</span>';
-    }
-
-    return `
-      <div style="padding-left: 12px; border-left: 2px solid #e2e8f0;">
-        ${entries.slice(0, 10).map(([key, value]) => `
-          <div style="margin-bottom: 4px;">
-            <span style="color: #7c3aed; font-weight: 500; font-size: 12px;">${this.formatMetricLabel(key)}:</span>
-            <span style="color: #4b5563; margin-left: 4px;">
-              ${typeof value === 'object' ? this.renderNestedObject(value) : this.escapeHtml(String(value))}
-            </span>
-          </div>
-        `).join('')}
-        ${entries.length > 10 ? `<div style="color: #9ca3af; font-size: 12px;">... 还有 ${entries.length - 10} 项</div>` : ''}
-      </div>
-    `;
   }
 
   /**
    * Render deep analysis data
    */
-  private renderDeepAnalysisData(deep: any, stageId: string): string {
+  private renderDeepAnalysisData(deep: any, _stageId: string): string {
     // 先收集所有内容
     const sectionContents: string[] = [];
 
@@ -3908,7 +3522,7 @@ export class HTMLReportGenerator {
       if (!value) continue;
 
       const displayName = this.formatMetricLabel(key);
-      const sectionId = `deep-${stageId}-${key}`.replace(/[^a-zA-Z0-9-]/g, '-');
+      const sectionId = this.nextDomId('deep-section');
 
       if (Array.isArray(value) && value.length > 0) {
         // Render as expandable cards for frame details
@@ -4027,7 +3641,9 @@ export class HTMLReportGenerator {
 
     // Extract key fields for the card header
     const title = item.title || item.name || item.id || item.frame_id || `项目 ${idx + 1}`;
-    const severity = item.severity || item.jank_type || item.type;
+    const titleKey = ['title', 'name', 'id', 'frame_id'].find(key => item[key]);
+    const severityKey = ['severity', 'jank_type', 'type'].find(key => item[key]);
+    const severity = severityKey ? item[severityKey] : undefined;
     const severityColor = severity === 'critical' ? '#ef4444' :
       severity === 'high' || severity === 'severe' ? '#f97316' :
         severity === 'medium' ? '#f59e0b' :
@@ -4040,7 +3656,7 @@ export class HTMLReportGenerator {
           ${severity ? `<span style="background: ${severityColor}20; color: ${severityColor}; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600;">${this.escapeHtml(String(severity))}</span>` : ''}
         </div>
         <div class="properties-grid">
-            ${Object.entries(item).filter(([k]) => !['title', 'name', 'id', 'severity', 'jank_type', 'type'].includes(k)).map(([k, v]) => {
+            ${Object.entries(item).filter(([k]) => k !== titleKey && k !== severityKey).map(([k, v]) => {
       if (typeof v === 'object' && v !== null) {
         // Handle nested objects
         return `
@@ -4048,16 +3664,7 @@ export class HTMLReportGenerator {
                     <details>
                       <summary>${this.formatMetricLabel(k)}</summary>
                       <div class="details-content">
-                        ${Array.isArray(v) ? v.map(i => `<div style="margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #f3f4f6;">${this.escapeHtml(String(i))}</div>`).join('') :
-            Object.entries(v).map(([nk, nv]) => `
-                            <div class="property-item">
-                              <span class="property-label">${this.formatMetricLabel(nk)}</span>
-                              <span class="property-value">${this.escapeHtml(
-                                typeof nv === 'object' ? JSON.stringify(nv) : String(nv),
-                              )}</span>
-                            </div>
-                          `).join('')
-          }
+                        ${this.renderNestedObject(v)}
                       </div>
                     </details>
                   </div>
@@ -4174,7 +3781,6 @@ export class HTMLReportGenerator {
       margin-right: 12px; border-radius: 2px;
     }
     .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; }
-    ${REPORT_LAYOUT_FIX_CSS}
     .metric-card {
       background: #f8f9fa;
       padding: 15px;
@@ -4529,7 +4135,8 @@ export class HTMLReportGenerator {
       .section { padding: 14px; }
       .metrics, .metrics-grid { grid-template-columns: 1fr; }
     }
-	  </style>
+	    ${REPORT_LAYOUT_FIX_CSS}
+  </style>
 </head>
 <body>
   <div class="container">
@@ -4541,8 +4148,8 @@ export class HTMLReportGenerator {
 	        <span class="badge badge-agent">Agent-Driven Architecture</span>
 	      </div>
 	      ${data.privateContext ? `<div class="private-context-notice">🔒 ${localize(outputLanguage,
-	        '含私有源码/知识库内容，仅本人可见',
-	        'Contains private source code or knowledge-base content, visible only to you')}</div>` : ''}
+	        '含私有源码/知识库；后端访问受限，请妥善保管导出文件',
+	        'Contains private source code or knowledge-base content; backend access is restricted. Protect exported files.')}</div>` : ''}
 	      <div class="report-actions">
 	        <button class="report-action-btn" type="button" onclick="saveSmartPerfettoReport()">💾 ${localize(outputLanguage, '保存网页文件', 'Save HTML Report')}</button>
 	        <span class="report-save-status" id="report-save-status"></span>
@@ -4554,15 +4161,15 @@ export class HTMLReportGenerator {
       <h2 class="section-title">${localize(outputLanguage, '执行概览', 'Execution Overview')}</h2>
       <div class="metrics">
         <div class="metric-card">
-          <div class="value">${(result.totalDurationMs / 1000).toFixed(1)}s</div>
+          <div class="value">${this.formatCellValue(result.totalDurationMs)} ms</div>
           <div class="label">${localize(outputLanguage, '总耗时', 'Total Duration')}</div>
         </div>
         ${analysisConfidenceIsGrounded(result) || !result.claimVerificationResult ? `<div class="metric-card">
           <div class="value">${(result.confidence * 100).toFixed(0)}%</div>
           <div class="label">${localize(outputLanguage, '置信度', 'Confidence')}</div>
         </div>` : `<div class="metric-card">
-          <div class="value">${result.claimVerificationResult.claimResults.filter(claim => claim.status === 'verified').length}/${result.claimVerificationResult.claimResults.length}</div>
-          <div class="label">${localize(outputLanguage, '已核验断言', 'Verified Claims')}</div>
+          <div class="value">${evidencePresentation?.claimVerificationResult ? `${evidencePresentation.claimVerificationResult.claimResults.filter(claim => claim.status === 'verified').length}/${evidencePresentation.claimVerificationResult.claimResults.length}` : '—'}</div>
+          <div class="label">${evidencePresentation?.claimVerificationResult ? localize(outputLanguage, '已核验断言', 'Verified Claims') : localize(outputLanguage, '核验信息不可用', 'Verification unavailable')}</div>
         </div>`}
         <div class="metric-card">
           <div class="value">${data.conversationTurns ?? result.rounds}</div>
@@ -4701,75 +4308,6 @@ export class HTMLReportGenerator {
     </div>
 	  </div>
 	  <script>
-	    async function saveSmartPerfettoReport() {
-	      var statusEl = document.getElementById('report-save-status');
-	      function setStatus(text) {
-	        if (statusEl) statusEl.textContent = text || '';
-	      }
-	      var url = new URL(window.location.href);
-	      var reportId = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'smartperfetto-report');
-	      var suggestedName = 'smartperfetto-' + reportId + '.html';
-	      var exportUrl = url.pathname.replace(/\\/$/, '') + '/export';
-
-	      try {
-	        setStatus('${localize(outputLanguage, '正在准备保存...', 'Preparing save...')}');
-	        var response = await fetch(exportUrl, {cache: 'no-store'});
-	        if (!response.ok) {
-	          throw new Error('${localize(outputLanguage, '导出失败', 'Export failed')}: HTTP ' + response.status);
-	        }
-	        var blob = await response.blob();
-	        if (window.showSaveFilePicker) {
-	          var handle = await window.showSaveFilePicker({
-	            suggestedName: suggestedName,
-	            types: [{
-	              description: '${localize(outputLanguage, 'HTML 网页报告', 'HTML report')}',
-	              accept: {'text/html': ['.html', '.htm']},
-	            }],
-	          });
-	          var writable = await handle.createWritable();
-	          await writable.write(blob);
-	          await writable.close();
-	        } else {
-	          var objectUrl = URL.createObjectURL(blob);
-	          var a = document.createElement('a');
-	          a.href = objectUrl;
-	          a.download = suggestedName;
-	          document.body.appendChild(a);
-	          a.click();
-	          document.body.removeChild(a);
-	          URL.revokeObjectURL(objectUrl);
-	        }
-	        setStatus('${localize(outputLanguage, '已保存 ', 'Saved ')}' + suggestedName);
-	        setTimeout(function() { setStatus(''); }, 3500);
-	      } catch (err) {
-	        if (err && err.name === 'AbortError') {
-	          setStatus('${localize(outputLanguage, '已取消保存', 'Save canceled')}');
-	          setTimeout(function() { setStatus(''); }, 2000);
-	          return;
-	        }
-	        console.error('[SmartPerfetto] ${localize(outputLanguage, '保存报告失败', 'Failed to save report')}:', err);
-	        setStatus((err && err.message) ? err.message : '${localize(outputLanguage, '保存失败', 'Save failed')}');
-	      }
-	    }
-
-	    function toggleTableRows(btn, hiddenCount) {
-      var tableContainer = btn.parentElement;
-      var table = tableContainer.querySelector('table');
-      var hiddenRows = table.querySelectorAll('.hidden-row');
-      if (hiddenRows.length > 0) {
-        var isHidden = hiddenRows[0].style.display === 'none';
-        hiddenRows.forEach(function(row) {
-          row.style.display = isHidden ? '' : 'none';
-        });
-        var span = btn.querySelector('span');
-        if (isHidden) {
-          span.innerHTML = '▲ ${localize(outputLanguage, '收起更多', 'Collapse rows')}';
-        } else {
-          span.innerHTML = '▼ ${localize(outputLanguage, '显示更多', 'Show')} ' + hiddenCount + ' ${localize(outputLanguage, '条记录', 'more rows')}';
-        }
-      }
-    }
-
     // Toggle expandable row details (for iterator results with L4 deep data)
     function toggleExpandableRow(arg) {
       // Support both toggleExpandableRow(rowId: string) and toggleExpandableRow(buttonEl: HTMLElement)
@@ -4872,6 +4410,8 @@ export class HTMLReportGenerator {
   <script>
     ${this.getLocalizedCausalMapScript(outputLanguage)}
   </script>
+<script>${REPORT_DOCUMENT_SCRIPT}</script>
+${REPORT_DOCUMENT_NO_SCRIPT}
 </body>
 </html>`;
   }
@@ -5085,74 +4625,16 @@ export class HTMLReportGenerator {
   }
 
   private prepareAgentDrivenEnvelopes(envelopes: DataEnvelope[]): DataEnvelope[] {
-    if (!Array.isArray(envelopes) || envelopes.length === 0) return [];
-
-    const hasScrollingJankFrames = envelopes.some((env) => {
-      const stepId = String(env?.meta?.stepId || '');
-      return stepId === 'get_app_jank_frames' || stepId === 'app_jank_frames' || stepId === 'batch_frame_root_cause';
-    });
-
-    const filtered = envelopes.filter((env) => {
-      if (!env || env.data === undefined || env.data === null) return false;
-
-      const skillId = String(env.meta?.skillId || '');
-      const stepId = String(env.meta?.stepId || '');
-
-      // Prefer scrolling_analysis as primary jank source in report.
-      // Consumer-side views are still available in raw SSE stream if needed.
-      if (
-        hasScrollingJankFrames &&
-        skillId === 'consumer_jank_detection' &&
-        (stepId === 'consumer_jank_frames' || stepId === 'consumer_jank_summary' || stepId === 'jank_severity_distribution')
-      ) {
-        return false;
-      }
-
+    const seen = new Set<string>();
+    return (Array.isArray(envelopes) ? envelopes : []).filter(envelope => {
+      if (!envelope || envelope.data === undefined || envelope.data === null) return false;
+      let key: string;
+      try { key = createHash('sha256').update(JSON.stringify(envelope)).digest('hex'); }
+      catch { return true; }
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
-
-    const seen = new Set<string>();
-    const deduped: DataEnvelope[] = [];
-    for (const env of filtered) {
-      const key = this.buildAgentEnvelopeDedupeKey(env);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      deduped.push(env);
-    }
-    return deduped;
-  }
-
-  private buildAgentEnvelopeDedupeKey(env: DataEnvelope): string {
-    const evidenceRefId = String(env.meta?.evidenceRefId || '');
-    const sourceToolCallId = String(env.meta?.sourceToolCallId || '');
-    if (evidenceRefId && sourceToolCallId) {
-      return `${evidenceRefId}:tool:${sourceToolCallId}`;
-    }
-    if (evidenceRefId) return evidenceRefId;
-    const skillId = String(env.meta?.skillId || 'unknown');
-    const stepId = String(env.meta?.stepId || 'unknown');
-    const source = String(env.meta?.source || '').split('#')[0];
-    const traceSide = String((env.meta as any)?.traceSide || (env as any)?.traceSide || '');
-    const traceId = String((env.meta as any)?.traceId || (env as any)?.traceId || '');
-    const data = env.data as any;
-
-    if (data && typeof data === 'object' && Array.isArray(data.rows)) {
-      const rows = data.rows as any[];
-      const sample = rows.length > 6
-        ? [...rows.slice(0, 3), ...rows.slice(-3)]
-        : rows;
-      return `${skillId}:${stepId}:${traceSide}:${traceId}:${rows.length}:${JSON.stringify(sample)}`;
-    }
-
-    const compactData = (() => {
-      try {
-        return JSON.stringify(data);
-      } catch {
-        return String(data);
-      }
-    })();
-
-    return `${skillId}:${stepId}:${source}:${traceSide}:${traceId}:${compactData.slice(0, 512)}`;
   }
 
   private renderCodeAwareReferencesSection(
@@ -5468,7 +4950,6 @@ export class HTMLReportGenerator {
     if (hits.length === 0) return '';
 
     const visibleHits = hits.slice(0, 8);
-    const omittedHits = hits.length - visibleHits.length;
     const cards = visibleHits
       .map(hit => this.renderCaseRecommendationCard(hit, outputLanguage))
       .filter(Boolean)
@@ -5488,7 +4969,7 @@ export class HTMLReportGenerator {
       <div class="case-rec-grid">
         ${cards}
       </div>
-      ${omittedHits > 0 ? `<div class="claim-source-note">${this.escapeHtml(localize(outputLanguage, `还有 ${omittedHits} 个相似案例未展开`, `${omittedHits} more case hits omitted`))}</div>` : ''}
+      ${hits.length > visibleHits.length ? `<details><summary>${localize(outputLanguage, '更多相似案例', 'More case matches')}</summary><div class="case-rec-grid">${hits.slice(visibleHits.length).map(hit => this.renderCaseRecommendationCard(hit, outputLanguage)).join('')}</div></details>` : ''}
     </div>`;
   }
 
@@ -6284,10 +5765,12 @@ export class HTMLReportGenerator {
     let bodyHtml: string;
     if (executionStateHtml) {
       bodyHtml = executionStateHtml;
-    } else if (envelope.display?.format === 'summary') {
+    } else if (envelope.display?.format === 'summary' || envelope.display?.format === 'metric') {
       bodyHtml = this.generateSummaryFromEnvelope(envelope, outputLanguage);
-    } else if (envelope.display?.format === 'text') {
+    } else if (envelope.display?.format === 'text' || (envelope.display?.format === 'timeline' && envelope.data.text !== undefined)) {
       bodyHtml = this.generateTextFromEnvelope(envelope, outputLanguage);
+    } else if (envelope.data.chart && !envelope.data.rows?.length) {
+      bodyHtml = `<details open><summary>${localize(outputLanguage, '图表数据（完整）', 'Complete chart data')}</summary>${this.renderNestedObject(envelope.data.chart)}</details>`;
     } else {
       bodyHtml = this.generateTableFromEnvelope(envelope, traceStartNs, outputLanguage);
     }
@@ -6984,7 +6467,7 @@ export class HTMLReportGenerator {
         const text = this.compactConversationTimelineText(
           String(item?.text || '').replace(/\s+/g, ' ').trim(),
           outputLanguage,
-        ).slice(0, 240);
+        );
         const ordinal = Number(item?.ordinal);
         if (!text || !Number.isFinite(ordinal) || ordinal <= 0) continue;
         const phaseRaw = String(item?.phase || '').toLowerCase();
@@ -7016,7 +6499,7 @@ export class HTMLReportGenerator {
           content.taskTitle ||
           content.phase ||
           ''
-        ).replace(/\s+/g, ' ').trim(), outputLanguage).slice(0, 240);
+        ).replace(/\s+/g, ' ').trim(), outputLanguage);
         if (!text) continue;
         const phase = item.type === 'task' ? 'tool' : item.type === 'response' ? 'result' : 'thinking';
         normalized.push({

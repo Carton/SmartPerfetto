@@ -30,7 +30,7 @@ import {
   REPORT_CAUSAL_MAP_STYLE_MARKER,
   REPORT_MERMAID_ASSET_ROUTE,
 } from '../services/reportCausalMapAssets';
-import { REPORT_LAYOUT_FIX_CSS, REPORT_LAYOUT_FIX_MARKER } from '../services/reportLayoutAssets';
+import {REPORT_DOCUMENT_CSP, upgradeReportDocumentHtml, withReportDocumentFilename} from '../services/reportDocumentAssets';
 import { localize, parseOutputLanguage } from '../agentv3/outputLanguage';
 import { backendLogPath } from '../runtimePaths';
 import {WeightedLruMap} from '../services/weightedLruMap';
@@ -61,18 +61,6 @@ import {sendResolvedFile} from '../utils/sendResolvedFile';
 const router = express.Router();
 
 const reportsDir = () => backendLogPath('reports');
-export const REPORT_DOCUMENT_CSP = [
-  "sandbox allow-scripts",
-  "default-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'unsafe-inline'",
-  'img-src data:',
-  'font-src data:',
-  "connect-src 'none'",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join('; ');
 
 function isRegularFileInside(root: string, candidate: string): string | undefined {
   try {
@@ -641,15 +629,6 @@ function injectReportStyle(html: string, css: string): string {
   return html;
 }
 
-function shouldInjectLegacyReportLayoutFix(html: string): boolean {
-  if (html.includes(REPORT_LAYOUT_FIX_MARKER)) return false;
-  return (
-    /class=["'][^"']*\bmetrics-grid\b/.test(html) &&
-    /class=["'][^"']*\bmetric-label\b/.test(html) &&
-    /class=["'][^"']*\bmetric-value\b/.test(html)
-  );
-}
-
 function upgradePreviouslyGatedCausalMapScript(html: string): string {
   const gateStart = "if (typeof mermaid !== 'undefined') {";
   const causalMapMarker = '\n  function decodeMermaidSource';
@@ -683,12 +662,7 @@ function upgradePreviouslyGatedCausalMapScript(html: string): string {
 export function upgradeLegacyReportHtml(html: string): string {
   if (!html) return html;
 
-  let upgraded = upgradePreviouslyGatedCausalMapScript(html);
-
-  if (shouldInjectLegacyReportLayoutFix(upgraded)) {
-    upgraded = injectReportStyle(upgraded, REPORT_LAYOUT_FIX_CSS);
-  }
-
+  let upgraded = upgradeReportDocumentHtml(upgradePreviouslyGatedCausalMapScript(html));
   const hasMermaid = upgraded.includes('<pre class="mermaid">');
   if (hasMermaid) {
     upgraded = upgraded.replace(
@@ -1128,7 +1102,7 @@ router.get('/:reportId/export', async (req, res) => {
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     recordReportAudit(context, 'report.exported', reportId, report);
-    res.send(upgradeLegacyReportHtml(report.html));
+    res.send(withReportDocumentFilename(upgradeLegacyReportHtml(report.html), filename));
   } catch (error: unknown) {
     sendRouteFailure(res, {
       code: 'report_export_failed',
@@ -1143,7 +1117,7 @@ router.get('/:reportId/export', async (req, res) => {
  *
  * Get HTML report by ID (memory cache → disk fallback)
  */
-router.get('/:reportId', (req, res) => {
+router.get('/:reportId', async (req, res) => {
   try {
     const { reportId } = req.params;
     const context = requireRequestContext(req);
@@ -1181,7 +1155,9 @@ router.get('/:reportId', (req, res) => {
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     recordReportAudit(context, 'report.read', reportId, report);
-    res.send(upgradeLegacyReportHtml(report.html));
+    const traceName = await reportTraceNameForExport(reportId, report, context);
+    const filename = reportExportFilename(traceName, reportId, report.generatedAt);
+    res.send(withReportDocumentFilename(upgradeLegacyReportHtml(report.html), filename));
   } catch (error: unknown) {
     sendRouteFailure(res, {
       code: 'report_read_failed',

@@ -152,6 +152,10 @@ Output:
 
 - Packages the question, evidence, conclusion, and suggestions into a readable report.
 - Useful for team sharing, issues, and regression records.
+- Metric tables retain literal values and declared units. Warning and critical observations have explicit labels; ordinary observations carry no green health marker. Units are never guessed from field names.
+- Expand complete tables, nested values, additional captured columns, case matches, and the conversation timeline. Different captures sharing a title or reference are retained.
+- `Save HTML Report` downloads the current page locally for offline reopening. Printing expands captured details and collapsed rows.
+- Opening a historical report upgrades its layout and save controls. Units or data omitted when an old file was generated require report regeneration; they cannot be recovered from the page.
 
 ## 6. Live Trace Comparison
 

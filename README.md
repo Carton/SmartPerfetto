@@ -159,6 +159,7 @@ missing proof and a contradicted claim remain distinct outcomes.
 Explicitly bound numeric displays are checked against captured evidence before semantic review, including unit conversion and rounding; model agreement cannot override a wrong display. Raw citations and propositions retain full precision. Correct formatting proves neither scope nor causality; older output retains the conservative rounding-warning path.
 Final conclusions retain all material findings, supporting evidence and limitations within the requested scope, even when intermediate tables are hidden. Length alone does not justify dropping findings or claims.
 Final answers prefer compact tables for comparable metrics, phase timings and trace differences, alongside explanations and evidence references. Single values and questions better answered in prose remain free-form.
+HTML reports retain captured table columns, nested values and provenance. Metric tables show declared units and explicit warning labels; ordinary observations carry no health verdict. Save HTML uses a local browser download, and printing expands captured details. See [HTML analysis reports](docs/getting-started/features.en.md#5-html-analysis-reports) for historical report limits.
 
 Each round shows its analysis process and steps above its final conclusion,
 which stays before the next round's question.
