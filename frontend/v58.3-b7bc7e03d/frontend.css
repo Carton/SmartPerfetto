@@ -10862,6 +10862,17 @@ tr.detail-row .expanded-empty.compact .empty-sections {
 .ai-message-content.ai-message-content-summary p {
   margin: 3px 0;
 }
+.ai-message-content.ai-message-content-summary table {
+  table-layout: fixed;
+}
+.ai-message-content.ai-message-content-summary table th,
+.ai-message-content.ai-message-content-summary table td {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+.ai-message-content.ai-message-content-summary table td {
+  font-variant-numeric: tabular-nums;
+}
 
 .ai-severity-badge {
   display: inline-block;
