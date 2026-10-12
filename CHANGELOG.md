@@ -13,6 +13,19 @@ Detailed commit-level history is available via `git log`.
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-10-12
+
+### Fixed
+
+- HTML reports retain complete evidence rows, conversation timelines, nested details and comparison/batch data. Save, copy, expand and row controls work in exported reports and offline reopening.
+- Private-report notices distinguish restricted backend access from the handling of exported files; report contract tests now verify the current notice while retaining secret and canary filtering assertions.
+
+### Changed
+
+- The committed AI Assistant frontend presents ordinary informational metrics as neutral tables instead of green status markers.
+- Default GitHub Actions run clean Linux build, core lifecycle, authentication, privacy and report contracts. Native platform, Rust and Docker checks run for related paths; full Trace/SQL, runtime and performance regression remains available locally and by manual dispatch.
+- Docker nightly builds use the smaller CI gate; version-tag publication retains the complete backend gate. Automatic CI cancels superseded runs and exposes one aggregate gate that preserves failures.
+
 ## [1.16.0] - 2026-10-11
 
 ### Added
