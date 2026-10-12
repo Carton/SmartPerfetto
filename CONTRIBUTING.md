@@ -80,9 +80,19 @@ Every code change must pass the PR gate before submitting a PR:
 npm run verify:pr
 ```
 
-`verify:pr` runs root quality checks, backend skill/strategy validation, typecheck,
-build, CLI package checks, core tests, and the 6 canonical trace regression. It
-also downloads the pinned `trace_processor_shell` automatically when needed.
+`verify:pr` is the complete local gate: root governance/quality, documentation,
+runtime assets, Rust, backend validation/typecheck/build/CLI packaging, every
+registered backend tier, and Trace/SQL regression. It downloads the pinned
+`trace_processor_shell` automatically when needed.
+
+GitHub Actions uses smaller `npm run verify:ci` and
+`npm --prefix backend run verify:ci` tiers for each PR/main push. Rust,
+macOS/Windows native contracts and Docker smoke run only for related paths.
+Full Trace/SQL and runtime regression remain local; for hosted reproduction,
+run `backend-agent-regression-gate.yml` manually with `full=true`. See
+[the verification ownership table](.claude/rules/testing.md#hosted-ci-and-local-verification).
+Real-provider, browser and performance acceptance remain change-specific;
+release workflows still validate the exact artifacts they publish.
 
 Useful targeted commands while iterating:
 

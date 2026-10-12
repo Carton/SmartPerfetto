@@ -163,6 +163,12 @@ CLI 未完成时会显示终止原因和具体诊断；已有报告正文也可�
 
 ## 贡献与支持
 
+GitHub Actions 每次 PR/主分支提交运行干净 Linux 环境的构建和合同检查；Rust、
+macOS/Windows 和 Docker 按相关改动触发。提交或合入 PR 前，在本地运行完整的
+`npm run verify:pr`；需要云端完整回归时，手动运行
+`backend-agent-regression-gate.yml` 并设置 `full=true`。详见
+[验证分工](.claude/rules/testing.md#hosted-ci-and-local-verification)。
+
 提交 Pull Request 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。Bug 和功能建议请使用
 [GitHub Issues](https://github.com/Gracker/SmartPerfetto/issues)；安全问题请通过
 [私有安全公告](https://github.com/Gracker/SmartPerfetto/security/advisories/new)

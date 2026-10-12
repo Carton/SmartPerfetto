@@ -32,6 +32,54 @@ documentation/i18n, runtime assets, quality, Rust, Skill/Strategy validation,
 typecheck/build, CLI packaging, registered test tiers and Trace regression.
 Use the actual scripts for the current selection rather than duplicating it here.
 
+## Hosted CI and Local Verification
+
+Local `verify:pr` remains the complete pre-PR/landing gate and keeps every
+registered backend suite reachable. GitHub Actions does not repeat that entire
+chain on every commit. A local pass is evidence for its exact files, dependency
+versions and environment; it does not replace a clean Linux install/build or
+native checks on another OS. Never claim hosted acceptance from a local run.
+
+| Where | Selection | Purpose |
+| --- | --- | --- |
+| Every PR and main push | Root `verify:ci`; backend `verify:ci` | Clean dependency install, governance/docs/i18n/runtime assets, quality, typecheck/build/CLI package, core lifecycle, authentication, privacy and output contracts |
+| Relevant paths only | Rust checks, macOS/Windows governance/native helpers, Docker smoke | OS, native dependency, launcher and container boundaries that a local macOS run cannot establish |
+| Local pre-PR/landing | Root `verify:pr` and affected owning tiers | Complete deterministic test chain, Trace/SQL accuracy, full runtime adapter suites, source semantic replay and scene regression |
+| Manual Actions | `backend-agent-regression-gate.yml` with `full=true` | Hosted full backend gate plus Trace corpus regression and all environment jobs, when Linux reproduction or broader hosted evidence is needed |
+| Local feature acceptance | Real-provider, browser/UI and performance checks | Credentials, real model behavior, rendered surfaces and target workloads; run the change-specific commands below |
+| Release workflows | npm publication, version-tag Docker gate, exact-archive native smoke | Validate the exact published package/image/archive; local or fast PR evidence cannot replace these gates |
+
+`scripts/ci-change-scope.cjs` reads the event diff and matches
+`.github/ci-scopes.json`. The PR uses its test merge tree; push includes all
+commits since `before`. Rename sources and destinations both count. Missing
+history fails the workflow rather than silently skipping coverage. Manual and
+first-push runs select all environments. There are no workflow-level PR path
+filters; the stable `gate` aggregates required and optional job outcomes with
+`always()` and rejects failures, cancellations and skipped mandatory jobs.
+Automatic runs for the same PR/ref supersede earlier runs; manual runs are
+independent. Native platform jobs do not repeat the Linux typecheck. Docker
+nightly/manual builds use backend `verify:ci`; version-tag builds retain the
+full backend `verify:pr` before publication.
+
+Credential-filter functional cases stay in `test:ci-privacy`. The unchanged
+large/pathological-input performance cases have their own
+`test:secret-patterns:performance` suite, called by local `test:architecture`
+and the manual full gate, so default CI does not repeat that stress workload.
+CI subsets reuse existing suites; they do not become additional owners in the
+local default chain. Keep full registration and fixture preparation intact.
+After changing scope or gate wiring, run:
+
+```bash
+npm run check:test-registration
+npm run verify:ci
+npm --prefix backend run verify:ci
+```
+
+Compare the local `verify:pr` suite selection before/after. The scope and
+workflow-result regressions are owned by root `test:governance`. A workflow edit
+is not a hosted result: report local checks and the eventual Actions run
+separately.
+
 ## Test Ownership and Registration
 
 Every backend suite must be reachable from root `verify:pr`. Register a new

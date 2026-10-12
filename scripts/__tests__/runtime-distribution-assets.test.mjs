@@ -726,22 +726,16 @@ test('npm registry wait is bounded by its sleep budget', REGISTRY_STEP_TEST, () 
   assert.match(result.stderr, /gh run rerun 4242 --failed/);
 });
 
-test('backend gate installs every dependency tree consumed by verify:pr', () => {
-  const workflow = readFileSync(
-    join(root, '.github/workflows/backend-agent-regression-gate.yml'),
-    'utf8',
-  );
-  const gate = workflow.slice(
-    workflow.indexOf('  gate:'),
-    workflow.indexOf('  cross-platform-contracts:'),
-  );
-
-  assert.match(
-    gate,
-    /cache-dependency-path: \|\s+package-lock\.json\s+backend\/package-lock\.json/,
-  );
-  assert.match(gate, /run: npm ci && npm --prefix backend ci/);
-  assert.match(gate, /run: npm --prefix backend run verify:pr/);
+test('backend CI installs both dependency trees for the fast and manual full gates', () => {
+  const workflow = loadYaml(readFileSync(
+    join(root, '.github/workflows/backend-agent-regression-gate.yml'), 'utf8',
+  ));
+  const steps = workflow.jobs.backend.steps;
+  const setup = steps.find(step => step.uses === 'actions/setup-node@v7');
+  assert.match(setup.with['cache-dependency-path'], /package-lock\.json\s+backend\/package-lock\.json/);
+  assert.ok(steps.some(step => step.run === 'npm ci && npm --prefix backend ci'));
+  assert.ok(steps.some(step => step.run === 'npm --prefix backend run verify:ci'));
+  assert.ok(steps.some(step => step.run === 'npm --prefix backend run verify:pr'));
 });
 
 test('Windows cross-platform contracts build and inject the fixed Go gate helper', () => {

@@ -198,7 +198,10 @@ describe('buildAgentDrivenReportData private knowledge projection', () => {
     expect(html).toContain('Private App');
     expect(html).toContain('Private Kernel');
     expect(html).toContain('Trace, Skill, and SQL evidence remain authoritative');
-    expect(html).toContain('Contains private source code or knowledge-base content, visible only to you');
+    const privateNotice = html.match(/<div class="private-context-notice">([^<]+)<\/div>/)?.[1];
+    expect(privateNotice).toContain('private source code or knowledge-base content');
+    expect(privateNotice).toContain('backend access is restricted');
+    expect(privateNotice).toContain('Protect exported files');
     expect(html).toContain('first look at scheduleFrame');
     expect(html).not.toContain('PRIVATE_');
     expect(JSON.stringify(report)).not.toContain('PRIVATE_');

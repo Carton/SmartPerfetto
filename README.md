@@ -192,6 +192,12 @@ a report body can still fail evidence or declaration checks. See the
 
 ## Contributing And Support
 
+GitHub Actions runs clean Linux build/contract checks on every PR/main push,
+with Rust, macOS/Windows and Docker checks scoped to affected paths. Run the
+complete `npm run verify:pr` locally before opening or landing a PR; full hosted
+regression is available by manually running `backend-agent-regression-gate.yml`
+with `full=true`. See [verification ownership](.claude/rules/testing.md#hosted-ci-and-local-verification).
+
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use
 [GitHub Issues](https://github.com/Gracker/SmartPerfetto/issues) for bugs and
 feature requests, and the
