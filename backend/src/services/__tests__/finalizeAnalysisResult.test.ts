@@ -1449,13 +1449,15 @@ describe('shared final analysis boundary', () => {
   });
 
   it('keeps the mismatch an error when the issue location lies outside the claim locations', async () => {
+    const body = 'The captured value is 61.3 ms.';
     const target = fixture({inconsistent: true, capturedCell: {value: 61.25, unit: 'ms', displayed: '61.3 ms'},
       dispatch: async (): Promise<IntentTransportResult> => ({status: 'ok', text: JSON.stringify({
         schemaVersion: 'final_semantic_response@1',
         bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: target.result.conclusion.length}]},
         claims: [{claimId: 'count', consistency: 'inconsistent',
           contentLocations: [{start: 0, end: 12, text: 'The captured'}],
-          issues: [{code: 'numeric_mismatch', contentLocations: [{start: 21, end: 27, text: '61.3 ms'}]}]}],
+          issues: [{code: 'numeric_mismatch', contentLocations: [{start: body.indexOf('61.3 ms'),
+            end: body.indexOf('61.3 ms') + '61.3 ms'.length, text: '61.3 ms'}]}]}],
         omissions: [], requirements: []})})});
     const final = await target.run();
     expect(final.result.claimVerificationResult).toMatchObject({status: 'failed',
@@ -1463,10 +1465,32 @@ describe('shared final analysis boundary', () => {
     expect(final.result.claimVerificationResult?.issues.some(issue => issue.severity === 'error')).toBe(true);
   });
 
+  it.each([false, true])('checks each explicitly located repeated rounded display, wrong second value=%s', async wrong => {
+    const first = 'Captured target frequency is 3334433.6 kHz.';
+    const second = `The same captured target frequency is ${wrong ? '3334433.7' : '3334433.6'} kHz.`;
+    const body = `${first}\n${second}`;
+    const locations = [{start: 0, end: first.length, text: first},
+      {start: first.length + 1, end: body.length, text: second}];
+    const target = fixture({body, numericCell: {value: 3334433.64, unit: 'kHz', displayed: '3334433.6 kHz'},
+      dispatch: async () => ({status: 'ok', text: JSON.stringify({schemaVersion: 'final_semantic_response@1',
+        bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+        claims: [{claimId: 'count', consistency: 'inconsistent', contentLocations: locations,
+          issues: [{code: 'numeric_mismatch', contentLocations: locations}]}], omissions: [], requirements: []})})});
+    const original = structuredClone(target.result.conclusionContract);
+    const final = await target.run();
+    expect(final.result.claimVerificationResult).toMatchObject({status: wrong ? 'failed' : 'partial', passed: false,
+      unsupportedClaimCount: wrong ? 1 : 0,
+      claimResults: [{status: wrong ? 'unsupported' : 'partial', deterministicProof: {status: 'proved'}}]});
+    expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
+      code: wrong ? 'semantic_numeric_mismatch' : 'semantic_numeric_display_rounding', severity: wrong ? 'error' : 'warning'}));
+    expect(final.result.conclusionContract?.claims).toEqual(original?.claims);
+    expect(final.result.conclusion).toBe(body);
+  });
+
   it.each([
     ['another issue on the same claim', [{code: 'numeric_mismatch', located: true}, {code: 'scope_mismatch', located: true}]],
     ['a mismatch whose location did not resolve', [{code: 'numeric_mismatch', located: false}]],
-  ])('keeps a rounding-shaped mismatch a contradiction with %s', async (_label, reviewIssues) => {
+  ])('requires a resolved objection before contradicting the captured value: %s', async (_label, reviewIssues) => {
     const body = 'The captured value is 49.';
     const location = {start: 0, end: body.length, text: body};
     const target = fixture({inconsistent: true, dispatch: async () => ({status: 'ok', text: JSON.stringify({
@@ -1476,9 +1500,17 @@ describe('shared final analysis boundary', () => {
         issues: reviewIssues.map(issue => ({code: issue.code, contentLocations: issue.located ? [location] : [{start: 0, end: 3, text: 'bad'}]}))}],
       omissions: [], requirements: []})})});
     const final = await target.run();
-    expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', claimResults: [{status: 'unsupported'}]});
-    expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
-      claimId: 'count', severity: 'error'}));
+    if (reviewIssues.every(issue => issue.located)) {
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', claimResults: [{status: 'unsupported'}]});
+      expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
+        claimId: 'count', severity: 'error'}));
+    } else {
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', passed: false,
+        claimResults: [{status: 'partial', deterministicProof: {status: 'proved'}, semanticReview: {consistency: 'unknown'}}]});
+      expect(final.result.claimVerificationResult?.unsupportedClaimCount).toBe(0);
+      expect(final.result.claimVerificationResult?.issues.some(issue => issue.severity === 'error')).toBe(false);
+      expect(deriveDeliveryVerdict(final.result)).toBe('unverified');
+    }
   });
 
   it('ignores tampered display evidence and continues to compare the original issued capture', async () => {
@@ -1642,6 +1674,24 @@ describe('shared final analysis boundary', () => {
     expect(finalized.result.deliveryAssurance?.report).toBe('coverage_incomplete');
     expect(finalized.result.deliveryAssurance?.claims).toBe(inconsistent ? 'failed' : 'passed');
     expect(finalized.result.claimVerificationResult?.claimResults[0].status).toBe(inconsistent ? 'unsupported' : 'verified');
+  });
+
+  it('keeps proved claims checked when the report reviewer miscopies a requirement claim reference', async () => {
+    const body = 'The captured value is 49.';
+    const location = {start: 0, end: body.length, text: body};
+    const target = fixture({report: true, dispatch: async () => ({status: 'ok', text: JSON.stringify({
+      schemaVersion: 'final_semantic_response@1',
+      bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+      claims: [{claimId: 'count', consistency: 'consistent', contentLocations: [location], issues: []}],
+      omissions: [], requirements: [{requirementId: 'detail', applicability: 'applicable', coverage: 'covered',
+        contentLocations: [location], claimIds: ['invented-claim']}]})})});
+    const finalized = await target.run();
+    expect(finalized.result.claimVerificationResult).toMatchObject({status: 'passed', passed: true, checkedClaimCount: 1,
+      claimResults: [{status: 'verified', deterministicProof: {status: 'proved'}}]});
+    expect(finalized.result.deliveryAssurance).toMatchObject({claims: 'passed', report: 'coverage_incomplete'});
+    expect(finalized.result.partial).toBe(true);
+    expect(finalized.semanticAssessment).toMatchObject({status: 'coverage_incomplete',
+      responseDiagnostic: {stage: 'report_requirement', code: 'invalid_reference'}});
   });
 
   it('still reports an omitted claim when report coverage is incomplete', async () => {

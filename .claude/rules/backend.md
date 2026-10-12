@@ -333,10 +333,15 @@ Keep these boundaries intact:
   discarded to resolve a collision.
 - The semantic review response degrades per item, never upward. Location ids
   are short (`L<line>.<digest prefix>`) but still resolved exactly per request.
-  An item the parser cannot use becomes `unknown`; an `inconsistent` judgment
-  keeps its issue even without a location; an unlocatable omission leaves body
-  coverage incomplete. Only envelope, body-coverage, report and investigation
-  rows still reject the whole response. Finalization reports only review
+  An item the parser cannot use becomes `unknown`, including a contradiction
+  whose required issue location cannot be resolved: a malformed review cannot
+  establish that the body is wrong. Duplicate claim judgments preserve the
+  exact validated locations of their contradictions. An unlocatable omission
+  leaves body coverage incomplete. A malformed report requirement leaves only
+  that pinned requirement unresolved; other claim and requirement judgments
+  remain available, and required unresolved coverage still blocks acceptance.
+  Envelope, body-coverage and investigation rows still reject the whole
+  response. Finalization reports only review
   started/finished progress; no heartbeat (it would evict SSE replay entries).
 - `analyze_wait_chain` headlines attributable time: other threads' work,
   runnable and uninterruptible segments. Perfetto ends a critical path at IRQ,
@@ -369,9 +374,12 @@ Keep these boundaries intact:
   one subject reference and one matching immutable original cell (private
   reference binding, original row index and column; producer unit),
   every issue location lies inside the claim-level `contentLocations` the review
-  returned, and exactly one number in those claim locations faithfully shows the
-  cell's actual value (closed unit mapping, exact rational arithmetic, display
-  precision, no ranges or comparisons). The numeric path must use a finite-proof
+  returned, and each exact claim/issue location selects one number that faithfully
+  shows the cell's actual value (closed unit mapping, exact rational arithmetic,
+  display precision, no ranges or comparisons). Separately located repeated
+  displays must all pass; broad spans with competing values do not qualify.
+  This checks display arithmetic only and grants no subject/scope agreement.
+  The numeric path must use a finite-proof
   anchor and actually lose display precision; an exact value or lossless unit
   conversion cannot explain a review mismatch as rounding. A declared number,
   mutable display value, unresolved raw citation, rejected numeric proposition

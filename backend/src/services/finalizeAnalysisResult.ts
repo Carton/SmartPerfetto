@@ -199,10 +199,10 @@ function semanticReviewTrace(review: SemanticClaimAssessment, body: string): Cla
  * matching anchor cell carries the immutable original value and producer unit;
  * numeric propositions additionally require actual display precision loss. Every
  * issue location lies inside the claim-level contentLocations the review
- * returned for this claim; and no second number of the cell value's unit
- * family inside those claim-level locations equals it. The anchor proves which
- * cell was cited, never what the body shows; the body proves the shown number
- * and its uniqueness. Anything unresolved keeps the mismatch an error.
+ * returned for this claim. Each exact location must select one faithful display
+ * of that cell, so separately located repetitions are allowed but a broad span
+ * with competing values is not. This explains only display arithmetic, never
+ * subject or scope agreement, and grants no verified standing.
  */
 function sameCapturedCell(
   claim: NonNullable<ConclusionContract['claims']>[number],
@@ -244,11 +244,13 @@ function sameCapturedCell(
   const inside = (location: {start: number; end: number}) =>
     review.contentLocations.some(({start, end}) => location.start >= start && location.end <= end);
   if (!issue.contentLocations.length || !issue.contentLocations.every(inside)) return undefined;
-  // A second same-value candidate anywhere the claim's locations reach makes
-  // the located number ambiguous: which cell it renders cannot be known.
+  // Validate every selected value, not just the matching candidates counted by
+  // the locator helper. One wrong repeat, range or comparison keeps the error.
   const cellNumeric = {operator: 'eq', value, unit};
-  return countLocatedNumbersShowingRounding(body, review.contentLocations, cellNumeric) === 1 &&
-    countLocatedNumbersShowingRounding(body, issue.contentLocations, cellNumeric) === 1
+  const faithful = (locations: readonly {start: number; end: number}[]) => locations.length > 0 &&
+    locations.every(location => countLocatedNumbersShowingRounding(body, [location], cellNumeric) === 1 &&
+      locatedNumbersShowDeclaredRounding(body, [location], cellNumeric, numericCell));
+  return faithful(review.contentLocations) && faithful(issue.contentLocations)
     ? {value, unit, requirePrecisionLoss: numericCell} : undefined;
 }
 
@@ -297,8 +299,8 @@ function joinClaimVerification(input: {
     if (presentation?.status === 'not_checked') issues.push({claimId: id, severity: 'warning',
       code: 'numeric_presentation_not_checked', message: `Claim ${id}: ${presentation.reason}`});
     if (bound && review?.consistency === 'inconsistent') {
-      // Only the issue's own located text: a contradiction whose location could
-      // not be resolved stays a contradiction. A downgrade to display rounding
+      // Only the issue's own validated text: an unlocatable review is unknown
+      // rather than a contradiction. A downgrade to display rounding
       // additionally needs the captured-cell identity of plan 2 D: the same
       // shown value in another cell's place is a real mismatch.
       const displayRounding = (issue: typeof review.issues[number]): boolean => {

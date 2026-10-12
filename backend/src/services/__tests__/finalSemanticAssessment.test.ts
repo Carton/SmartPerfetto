@@ -762,7 +762,7 @@ describe('final semantic response protocol', () => {
       responseDiagnostic: {stage: 'claim_set', code: 'set_mismatch', expectedCount: 2, actualCount: 1}});
   });
 
-  it('keeps a contradiction whose location cannot be resolved and degrades only the unlocatable consistent claim', async () => {
+  it('degrades unlocatable judgments without contradicting or discarding correctly located claims', async () => {
     const run = fixture({body: 'Frame A took 9 ms. Frame B took 4 ms.'});
     const second = {...structuredClone(run.contract.claims![0]), id: 'claim-b', text: 'Frame B took 4 ms.'};
     const third = {...structuredClone(run.contract.claims![0]), id: 'claim-c', text: 'Frame A took 9 ms.'};
@@ -777,9 +777,9 @@ describe('final semantic response protocol', () => {
       {claimId: 'invented', consistency: 'consistent', contentLocations: [{text: 'Frame B took 4 ms.'}], issues: []},
     ] as any;
     const assessment = await assessFinalSemantics(run.input);
-    expect(assessment).toMatchObject({status: 'coverage_incomplete', consistency: 'inconsistent', reason: 'invalid_response',
+    expect(assessment).toMatchObject({status: 'coverage_incomplete', consistency: 'unknown', reason: 'invalid_response',
       claims: [
-        {claimId: 'claim-a', consistency: 'inconsistent', contentLocations: [], issues: [{code: 'numeric_mismatch', contentLocations: []}]},
+        {claimId: 'claim-a', consistency: 'unknown', contentLocations: [], issues: []},
         {claimId: 'claim-b', consistency: 'consistent', contentLocations: [{start: body.indexOf('Frame B'), end: body.length}]},
         {claimId: 'claim-c', consistency: 'unknown'},
       ],
@@ -1044,14 +1044,15 @@ describe('final semantic v2 exact quotation locations', () => {
         if (collection === 'omission') run.reply.omissions = [{code: 'undeclared_claim', contentLocations: locations}];
         if (collection === 'requirement') run.reply.requirements[0].contentLocations = locations;
         const assessment = await assessFinalSemantics(run.input);
-        // Framing rows (report requirements) still reject the response; claim-side rows degrade
-        // without promotion: an unlocatable contradiction survives, anything else is unknown.
+        // Item defects leave their own coverage unresolved and preserve other judgments.
         const expected = !invalid
           ? {status: 'checked', consistency: collection === 'issue' || collection === 'omission' ? 'inconsistent' : 'consistent'}
-          : collection === 'requirement' ? {reason: 'invalid_response', claims: [], omissions: [], requirements: []}
-            : collection === 'issue' ? {status: 'checked', consistency: 'inconsistent',
+          : collection === 'requirement' ? {status: 'coverage_incomplete', reason: 'invalid_response',
+            claims: [{claimId: 'claim-a', consistency: 'consistent'}], omissions: [],
+            coverage: {report: 'incomplete'}, requirements: [{requirementId: 'observation', coverage: 'unknown'}]}
+            : collection === 'issue' ? {status: 'coverage_incomplete', consistency: 'unknown',
               responseDiagnostic: {stage: 'claim', code: 'invalid_location', ordinal: 1},
-              claims: [{claimId: 'claim-a', consistency: 'inconsistent', issues: [{code: 'numeric_mismatch', contentLocations: []}]}]}
+              claims: [{claimId: 'claim-a', consistency: 'unknown', issues: []}]}
               : collection === 'omission' ? {status: 'coverage_incomplete', reason: 'invalid_response', omissions: [],
                 coverage: {body: 'incomplete'}}
                 : {status: 'coverage_incomplete', reason: 'invalid_response', claims: [{claimId: 'claim-a', consistency: 'unknown', contentLocations: []}]};
@@ -1232,6 +1233,55 @@ describe('final semantic v4 body span locations', () => {
 
 describe('semantic report applicability and coverage', () => {
   const required = {id: 'observation', label: 'Observed data', required: true};
+  it('retains checked claims and other report rows when one requirement cites an unknown claim', async () => {
+    const run = fixture({requirements: [required, {id: 'cause', label: 'Cause', required: true}], scope: 'scene_wide'});
+    run.reply.requirements[0].claimIds.push('unknown-claim');
+    const assessment = await assessFinalSemantics(run.input);
+    expect(assessment).toMatchObject({status: 'coverage_incomplete', reason: 'invalid_response',
+      coverage: {claims: 'complete', body: 'complete', report: 'incomplete'},
+      claims: [{claimId: 'claim-a', consistency: 'consistent'}],
+      requirements: [
+        {requirementId: 'observation', applicability: 'applicable', coverage: 'unknown', contentLocations: [], claimIds: []},
+        {requirementId: 'cause', applicability: 'applicable', coverage: 'covered', claimIds: ['claim-a']},
+      ], responseDiagnostic: {stage: 'report_requirement', code: 'invalid_reference', ordinal: 1}});
+    expect(run.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reject an answer review for an invented report requirement outside its scope', async () => {
+    const run = fixture();
+    run.reply.requirements.push({requirementId: 'invented', applicability: 'applicable', coverage: 'covered',
+      contentLocations: [span(run.input.snapshot.body)], claimIds: ['claim-a']});
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'checked',
+      coverage: {claims: 'complete', report: 'not_applicable'},
+      claims: [{claimId: 'claim-a', consistency: 'consistent'}], requirements: [],
+      responseDiagnostic: {stage: 'report_requirement', code: 'invalid_reference', ordinal: 1}});
+  });
+
+  it('cannot let an unlocatable numeric objection contradict a correctly located declaration', async () => {
+    const run = fixture();
+    run.reply.claims[0].consistency = 'inconsistent';
+    run.reply.claims[0].issues = [{code: 'numeric_mismatch', contentLocations: []}];
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'coverage_incomplete', consistency: 'unknown',
+      coverage: {claims: 'incomplete'}, claims: [{claimId: 'claim-a', consistency: 'unknown', issues: []}],
+      responseDiagnostic: {stage: 'claim', code: 'invalid_location', ordinal: 1}});
+  });
+
+  it('preserves located objections when a reviewer repeats a claim ID', async () => {
+    const run = fixture({body: 'Frame A took 9 ms. Frame A took 10 ms.'});
+    const body = run.input.snapshot.body;
+    run.reply.claims[0].consistency = 'inconsistent';
+    run.reply.claims[0].contentLocations = [span(body, 0, 17)];
+    run.reply.claims[0].issues = [{code: 'numeric_mismatch', contentLocations: [span(body, 0, 17)]}];
+    run.reply.claims.push(structuredClone(run.reply.claims[0]));
+    run.reply.claims.push({...structuredClone(run.reply.claims[0]), contentLocations: [span(body, 18)],
+      issues: [{code: 'numeric_mismatch', contentLocations: [span(body, 18)]}]});
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'checked', consistency: 'inconsistent',
+      claims: [{claimId: 'claim-a', consistency: 'inconsistent',
+        contentLocations: [{start: 0, end: 17}, {start: 18, end: body.length}],
+        issues: [{code: 'numeric_mismatch', contentLocations: [{start: 0, end: 17}]},
+          {code: 'numeric_mismatch', contentLocations: [{start: 18, end: body.length}]}]}]});
+  });
+
   it('accepts content locations without a prescribed heading', async () => {
     const run = fixture({requirements: [required], scope: 'scene_wide'});
     expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'checked', coverage: {report: 'complete'},

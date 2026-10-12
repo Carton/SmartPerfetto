@@ -462,6 +462,17 @@ propositions to numeric ones. Unknown review alone does not fail a focused answe
 full reports still require their report-assessment contract. The body, native completion and original claims
 are independent inputs; valid JSON and model agreement alone are not proof.
 
+A malformed review location cannot establish that the body is wrong: an
+unresolvable claim or required issue location leaves that judgment unknown.
+Duplicate claim judgments retain the exact validated locations of their
+contradictions, without creating enclosing spans. Report requirements parse
+independently: a bad reference or missing row leaves only its pinned requirement
+unresolved; other judgments remain available, and required report gaps still
+block complete acceptance. Within one evidence-read batch, the same immutable
+registration, row and fields reuse metadata and cell budget already spent.
+Every reference still checks identity, authorization, cancellation and deadline;
+new registrations, rows or fields remain charged, with no credit across batches.
+
 Raw numeric equality remains separate from prose display precision. The optional
 `numeric.presentation` declaration (`numeric_presentation@1`) binds body literals,
 occurrences, units and decimal places. Before semantic review,
@@ -490,8 +501,10 @@ single semantic review reports a faithful rounding as `numeric_mismatch`, the
 finalizer may retain a display warning. A `numeric.cell` path requires complete
 finite proof and unique immutable cell identity through its private reference
 binding, original row, column and proof anchor, with the captured producer unit.
-Only one same-value display candidate may lie in the claim and issue locations,
-and the display must actually lose precision. Exact repetitions, other semantic
+Each exact claim and issue location must select one faithful display candidate;
+separately located repetitions must all pass, while broad spans with competing
+values do not qualify. This checks display arithmetic, not subject or scope
+agreement, and the numeric display must actually lose precision. Exact repetitions, other semantic
 errors, wrong values and components used as totals do not qualify. The claim
 stays partial: no original proposition, body or review is rewritten and the
 display rule grants no verified standing. Reports, CLI and snapshots share it.

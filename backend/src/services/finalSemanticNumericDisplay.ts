@@ -175,8 +175,8 @@ const overlaps = (start: number, end: number, from: number, to: number): boolean
  * Distinct number tokens inside the locations that faithfully show
  * `numeric.value` at their own displayed precision (the same closed grammar,
  * unit mapping and rounding rule as the downgrade itself). The captured-cell
- * rounding gate uses it to fail closed when a second display candidate exists
- * anywhere the claim's own locations reach (plan 2 D).
+ * rounding gate uses it per exact location to reject competing display candidates;
+ * faithful arithmetic is checked separately for every selected value.
  */
 export function countLocatedNumbersShowingRounding(
   body: string,

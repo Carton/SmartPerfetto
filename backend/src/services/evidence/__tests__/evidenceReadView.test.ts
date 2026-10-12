@@ -12,7 +12,7 @@ import {runDeterministicClaimVerifier} from '../../verifier/deterministicClaimVe
 import {SkillExecutor} from '../../skillEngine/skillExecutor';
 import {prepareClaimEvidence, preparedClaimEvidenceSnapshot, preparedEvidenceMatchesInput, evidenceReferenceKey,
   preparedIdentityResolutions, type PreparedClaimEvidence} from '../claimEvidencePreparation';
-import {bindReadResolutionToAnchor, evidenceReadFailureIsUnreadable, isIssuedEvidenceReadResolution, type EvidenceReadView, type EvidenceReadViewOptions} from '../evidenceReadView';
+import {bindReadResolutionToAnchor, createEvidenceReadView, evidenceReadFailureIsUnreadable, isIssuedEvidenceReadResolution, type EvidenceReadView, type EvidenceReadViewOptions} from '../evidenceReadView';
 import {buildEvidenceContract} from '../evidenceContractBuilder';
 import {runClaimVerification} from '../../verifier/claimVerificationRunner';
 import type {ConclusionContract, ConclusionContractClaimReference} from '../../../agent/core/conclusionContract';
@@ -52,6 +52,124 @@ function contract(reference: ConclusionContractClaimReference): ConclusionContra
 }
 
 describe('runtime execution evidence read view', () => {
+  it('reuses one immutable row for ordinary and scope references without spending its read budget twice', async () => {
+    const store = new ArtifactStore();
+    const {id, evidenceRefId} = add(store, undefined, {title: 'Retained producer provenance '.repeat(400)});
+    const ordinary = {artifactId: id, evidenceRefId, rowIndex: 0, column: 'metric', value: 2};
+    const subject = {evidenceRefId, rowIndex: 0, column: 'metric', value: 2};
+    const [probe] = await read(store.createEvidenceReadView(readOptions), ordinary);
+    if (probe.status !== 'resolved') throw new Error('fixture capture was not readable');
+    const budget = {maxBytes: JSON.stringify(probe.record).length * 2 + 1024, maxCells: 1};
+    const view = store.createEvidenceReadView({...readOptions, budget});
+    const results = await view.resolveReferences([ordinary, subject].map(reference => ({
+      key: evidenceReferenceKey(reference), reference, requiredColumns: ['metric'],
+    })));
+    expect(results.map(result => result.status)).toEqual(['resolved', 'resolved']);
+    expect(results.map(result => result.key)).toEqual([evidenceReferenceKey(ordinary), evidenceReferenceKey(subject)]);
+    expect(results[0]).not.toBe(results[1]);
+    const declaration = contract(ordinary);
+    declaration.claims![0].semantics!.scope.subjectRefs = [subject];
+    const preparedEvidence = await prepareClaimEvidence({conclusionContract: declaration, evidenceReadView: view});
+    expect(runClaimVerification({conclusionContract: declaration, preparedEvidence})
+      .claimVerificationResult.claimResults[0].deterministicProof).toMatchObject({status: 'proved'});
+    // Reusing the raw read never substitutes an expected value from another reference.
+    declaration.claims![0].references![0].value = 3;
+    const wrong = await prepareClaimEvidence({conclusionContract: declaration, evidenceReadView: view});
+    expect(runClaimVerification({conclusionContract: declaration, preparedEvidence: wrong})
+      .claimVerificationResult.claimResults[0].referenceCells).toEqual(expect.arrayContaining([
+        expect.objectContaining({status: 'value_mismatch'}),
+      ]));
+  });
+
+  it('charges new rows and columns while independently rejecting conflicting cached-row identifiers', async () => {
+    const store = new ArtifactStore();
+    const {id, evidenceRefId} = add(store, {columns: ['metric', 'extra'], rows: [[2, 3], [4, 5]]});
+    const other = add(store, undefined, {evidenceRefId: 'other-record'});
+    const references = [
+      {artifactId: id, evidenceRefId, rowIndex: 0, column: 'metric'},
+      {artifactId: other.id, evidenceRefId, rowIndex: 0, column: 'metric'},
+      {evidenceRefId, rowIndex: 1, column: 'metric'},
+      {evidenceRefId, rowIndex: 0, column: 'extra'},
+    ];
+    const results = await store.createEvidenceReadView({...readOptions, budget: {maxCells: 1}})
+      .resolveReferences(references.map(reference => ({key: evidenceReferenceKey(reference), reference, requiredColumns: []})));
+    expect(results).toMatchObject([
+      {status: 'resolved'}, {status: 'missing', reason: 'identifier_conflict'},
+      {status: 'incomplete', reason: 'cell_read_budget_exhausted'},
+      {status: 'incomplete', reason: 'cell_read_budget_exhausted'},
+    ]);
+  });
+
+  it('does not share metadata admission across registrations of the same witness', async () => {
+    const store = new ArtifactStore();
+    const data = {columns: ['metric'], rows: [[2]]};
+    const {id, evidenceRefId, witness} = add(store, data, {title: 'Retained producer provenance '.repeat(400)});
+    const second = store.store({skillId: 'fixture', data, title: 'Retained producer provenance '.repeat(400),
+      traceProvenance: buildTraceProcessorQueryProvenance({traceId: 'trace', traceSide: 'current'})});
+    expect(store.registerEvidenceCapture(second, witness, {evidenceRefId: 'second-registration'})).toBe(true);
+    const [probe] = await read(store.createEvidenceReadView(readOptions), {artifactId: id, rowIndex: 0, column: 'metric'});
+    if (probe.status !== 'resolved') throw new Error('fixture capture was not readable');
+    const references = [{evidenceRefId, rowIndex: 0, column: 'metric'},
+      {evidenceRefId: 'second-registration', rowIndex: 0, column: 'metric'}];
+    const results = await store.createEvidenceReadView({...readOptions,
+      budget: {maxBytes: JSON.stringify(probe.record).length * 2 + 1024}}).resolveReferences(
+      references.map(reference => ({key: evidenceReferenceKey(reference), reference, requiredColumns: []})));
+    expect(results).toMatchObject([{status: 'resolved'},
+      {status: 'incomplete', reason: 'evidence_read_size_or_deadline_exhausted'}]);
+  });
+
+  it('does not reuse shallow-frozen metadata with mutable nested fields', async () => {
+    const store = new ArtifactStore();
+    const {id, evidenceRefId, witness} = add(store, undefined, {title: 'Retained producer provenance '.repeat(400)});
+    const [probe] = await read(store.createEvidenceReadView(readOptions), {artifactId: id, rowIndex: 0, column: 'metric'});
+    if (probe.status !== 'resolved') throw new Error('fixture capture was not readable');
+    const record = Object.freeze({...probe.record, display: Object.freeze({...probe.record.display, columns: []})});
+    const references = [{artifactId: id, rowIndex: 0, column: 'metric'}, {evidenceRefId, rowIndex: 0, column: 'metric'}];
+    const view = createEvidenceReadView(() => [{record, witness}], {...readOptions,
+      budget: {maxBytes: JSON.stringify(record).length * 2 + 1024}});
+    expect(await view.resolveReferences(references.map(reference => ({
+      key: evidenceReferenceKey(reference), reference, requiredColumns: [],
+    })))).toMatchObject([{status: 'resolved'}, {status: 'incomplete', reason: 'evidence_read_size_or_deadline_exhausted'}]);
+  });
+
+  it.each(['cancel', 'deadline'] as const)('checks %s again before issuing a reused row', async stop => {
+    const store = new ArtifactStore(); const {id, evidenceRefId} = add(store);
+    const controller = new AbortController();
+    let expired = false;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => expired ? 1500 : 0);
+    try {
+      const references = [{artifactId: id, rowIndex: 0, column: 'metric'}, {evidenceRefId, rowIndex: 0, column: 'metric'}];
+      const requests = references.map(reference => ({key: evidenceReferenceKey(reference), reference, requiredColumns: []}));
+      Object.defineProperty(requests, Symbol.iterator, {value: function* () {
+        yield requests[0];
+        if (stop === 'cancel') controller.abort(); else expired = true;
+        yield requests[1];
+      }});
+      const results = await store.createEvidenceReadView(readOptions).resolveReferences(requests, controller.signal);
+      expect(results).toMatchObject([{status: 'resolved'},
+        {status: 'incomplete', reason: stop === 'cancel' ? 'read_cancelled' : 'read_budget_exhausted'}]);
+    } finally { clock.mockRestore(); }
+  });
+
+  it('shares metadata cost without turning metadata-only reads into row proof or bypassing the reference cap', async () => {
+    const store = new ArtifactStore();
+    const {id, evidenceRefId} = add(store, undefined, {title: 'Retained producer provenance '.repeat(400)});
+    const [probe] = await read(store.createEvidenceReadView(readOptions), {artifactId: id, rowIndex: 0, column: 'metric'});
+    if (probe.status !== 'resolved') throw new Error('fixture capture was not readable');
+    const requests = [{key: 'artifact-metadata', reference: {artifactId: id}, requiredColumns: [], metadataOnly: true as const},
+      {key: 'evidence-metadata', reference: {evidenceRefId}, requiredColumns: [], metadataOnly: true as const}];
+    const options = {...readOptions, budget: {maxCells: 0, maxBytes: JSON.stringify(probe.record).length * 2}};
+    const results = await store.createEvidenceReadView(options).resolveReferences(requests);
+    expect(results.map(result => result.status)).toEqual(['resolved', 'resolved']);
+    for (const result of results) {
+      const anchor = {};
+      bindReadResolutionToAnchor(anchor, result);
+      expect(getCapturedAnchorFacts(anchor)).toBeUndefined();
+    }
+    expect(await store.createEvidenceReadView({...options, budget: {...options.budget, maxReferences: 1}})
+      .resolveReferences(requests)).toMatchObject([{status: 'resolved'}, {status: 'incomplete', reason: 'read_budget_exhausted'}]);
+  });
+
   it('reads identity metadata with no row/cell budget and cannot bind it as a cell proof', async () => {
     const store = new ArtifactStore(); const {id} = add(store);
     const view = store.createEvidenceReadView({...readOptions, budget: {maxCells: 0}});
@@ -637,6 +755,29 @@ describe('native row companions in prepared evidence', () => {
     expect(result.claimVerificationResult.passed).toBe(false);
     const copied = JSON.parse(JSON.stringify(result.claimSupport));
     expect(runDeterministicClaimVerifier({claimSupport: copied}).claimResults[0].deterministicProof.nativeRows).toBeUndefined();
+  });
+
+  it('reuses native row context only within one batch while issuing each locator independently', async () => {
+    const {store, ref} = await rawFixture();
+    const [probe] = await read(store.createEvidenceReadView(readOptions), ref);
+    if (probe.status !== 'resolved') throw new Error('fixture capture was not readable');
+    const ordinary = {...ref, artifactId: probe.record.meta.artifactId};
+    const requests = [ordinary, ref].map(reference => ({key: evidenceReferenceKey(reference), reference, requiredColumns: ['dur']}));
+    const view = store.createEvidenceReadView({...readOptions,
+      budget: {maxCells: 2, maxBytes: JSON.stringify(probe.record).length * 2 + 1024}});
+    const results = await view.resolveReferences(requests);
+    expect(results.map(result => result.status)).toEqual(['resolved', 'resolved']);
+    for (const [index, resolution] of results.entries()) {
+      const anchor = {context: {traceId: 'trace', traceSide: 'current'}};
+      bindReadResolutionToAnchor(anchor, resolution);
+      expect(getCapturedAnchorFacts(anchor)).toMatchObject({referenceKey: requests[index].key,
+        row: {event_id: 7, dur: 42_000_000}, nativeRow: {relation: 'slice', id: 7}});
+    }
+    const copied = JSON.parse(JSON.stringify(results[0]));
+    expect(isIssuedEvidenceReadResolution(copied)).toBe(false);
+    // New batches do not inherit an earlier admitted cell or its budget credit.
+    expect(await view.resolveReferences([requests[0], {...requests[1], reference: {...ref, rowIndex: 1}}]))
+      .toMatchObject([{status: 'resolved'}, {status: 'incomplete', reason: 'cell_read_budget_exhausted'}]);
   });
 
   it('charges ID cells, bytes and deadlines, while metadata-only reads have no row witness', async () => {

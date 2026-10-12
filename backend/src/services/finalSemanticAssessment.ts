@@ -588,10 +588,9 @@ const unknownClaim = (claimId: string): SemanticClaimAssessment =>
 type SemanticLocationFormat = 'offsets_with_text' | 'exact_quote' | 'catalog_or_exact_quote';
 
 /**
- * One claim judgment, degraded rather than rejected. A contradiction survives a
- * location the backend cannot resolve (the issue is kept without a location);
- * any other judgment with an unusable location or a violated constraint becomes
- * `unknown`, which can never verify a claim.
+ * One claim judgment, degraded rather than rejected. An unusable location makes
+ * the judgment unknown: a malformed review cannot establish either agreement or
+ * contradiction with the immutable body.
  */
 /** Whether a declared claim carries typed semantics a `consistent` judgment can rest on. */
 function declarationHasTypedSemantics(
@@ -633,7 +632,8 @@ function parseClaimItem(item: Record<string, unknown>, claimId: string, ordinal:
   }
   if (!locationValid) degrade({stage: 'claim', code: 'invalid_location', ordinal});
   if (item.consistency === 'inconsistent') {
-    if (issues.length) return {claimId, consistency: 'inconsistent', contentLocations: locations ?? [], issues};
+    if (!locationValid) return unknownClaim(claimId);
+    if (issues.length) return {claimId, consistency: 'inconsistent', contentLocations: locations!, issues};
     degrade({stage: 'claim', code: 'invalid_constraint', ordinal});
     return unknownClaim(claimId);
   }
@@ -700,8 +700,11 @@ function parseResponseStrict(
       // Two judgments for one claim: a contradiction survives, anything else is unknown.
       degrade({stage: 'claim', code: 'invalid_reference', ordinal});
       const contradictions = [previous, parsed].filter(claim => claim.consistency === 'inconsistent');
-      parsedClaims.set(claimId, contradictions.length ? {claimId, consistency: 'inconsistent', contentLocations: [],
-        issues: contradictions.flatMap(claim => claim.issues)} : unknownClaim(claimId));
+      const locations = contradictions.flatMap(claim => claim.contentLocations);
+      const issues = contradictions.flatMap(claim => claim.issues);
+      parsedClaims.set(claimId, contradictions.length ? {claimId, consistency: 'inconsistent',
+        contentLocations: [...new Map(locations.map(location => [`${location.start}:${location.end}`, location])).values()],
+        issues: [...new Map(issues.map(issue => [JSON.stringify(issue), issue])).values()]} : unknownClaim(claimId));
       continue;
     }
     parsedClaims.set(claimId, parsed);
@@ -733,29 +736,40 @@ function parseResponseStrict(
   const pinnedRequirements = reportRequested ? captured.snapshot.reportRequirements!.requirements : [];
   const requirementMap = new Map(pinnedRequirements.map(requirement => [requirement.id, requirement]));
   const seenRequirements = new Set<string>();
-  const requirements: AnalysisReportRequirementAssessment[] = [];
+  const parsedRequirements = new Map<string, AnalysisReportRequirementAssessment>();
+  const unknownRequirement = (id: string): AnalysisReportRequirementAssessment => ({requirementId: id,
+    applicability: fixedReportRequirementApplicability(requirementMap.get(id)!, captured.intent.scope) ?? 'unknown',
+    coverage: 'unknown', contentLocations: [], claimIds: []});
   for (const [index, item] of value.requirements.entries()) {
+    const id = record(item) && nonempty(item.requirementId) && requirementMap.has(item.requirementId)
+      ? item.requirementId : undefined;
+    const duplicate = id !== undefined && seenRequirements.has(id);
+    if (id !== undefined) seenRequirements.add(id);
     if (!record(item) || !keys(item, ['requirementId', 'applicability', 'coverage', 'contentLocations', 'claimIds']) ||
-      !nonempty(item.requirementId) || !requirementMap.has(item.requirementId) || seenRequirements.has(item.requirementId) ||
+      id === undefined || duplicate ||
       !member(item.applicability, ['applicable', 'not_applicable', 'unknown']) || !member(item.coverage, ['covered', 'missing', 'unknown']) ||
       !Array.isArray(item.claimIds) || item.claimIds.some(id => typeof id !== 'string' || !declarations.has(id)) ||
       new Set(item.claimIds).size !== item.claimIds.length) {
-      return invalidResponse('report_requirement', 'invalid_reference', {ordinal: index + 1});
+      degrade({stage: 'report_requirement', code: 'invalid_reference', ordinal: index + 1});
+      if (id !== undefined) parsedRequirements.set(id, unknownRequirement(id));
+      continue;
     }
     const locations = parseLocations(item.contentLocations, body, locationFormat, locationCatalog);
-    const fixed = fixedReportRequirementApplicability(requirementMap.get(item.requirementId)!, captured.intent.scope);
+    const fixed = fixedReportRequirementApplicability(requirementMap.get(id)!, captured.intent.scope);
     if (!locations || (fixed !== undefined && item.applicability !== fixed) ||
       (item.applicability !== 'applicable' && item.coverage !== 'unknown') ||
       (item.coverage === 'covered' && !locations.length && !item.claimIds.length)) {
-      return invalidResponse('report_requirement', locations ? 'invalid_constraint' : 'invalid_location', {ordinal: index + 1});
+      degrade({stage: 'report_requirement', code: locations ? 'invalid_constraint' : 'invalid_location', ordinal: index + 1});
+      parsedRequirements.set(id, unknownRequirement(id));
+      continue;
     }
-    seenRequirements.add(item.requirementId);
-    requirements.push({requirementId: item.requirementId, applicability: item.applicability,
+    parsedRequirements.set(id, {requirementId: id, applicability: item.applicability,
       coverage: item.coverage, contentLocations: locations, claimIds: item.claimIds as string[]});
   }
-  if (seenRequirements.size !== requirementMap.size) return invalidResponse('report_requirement_set', 'set_mismatch', {
+  if (seenRequirements.size !== requirementMap.size) degrade({stage: 'report_requirement_set', code: 'set_mismatch',
     expectedCount: requirementMap.size, actualCount: seenRequirements.size,
   });
+  const requirements = pinnedRequirements.map(requirement => parsedRequirements.get(requirement.id) ?? unknownRequirement(requirement.id));
   const investigation = parseInvestigationResponse(value, captured, locationFormat, locationCatalog, investigationRecordCatalog);
   // Coverage of the claims the review owns: the declaration's valid claims. A
   // partially valid declaration (per-item failures only) can still cover them

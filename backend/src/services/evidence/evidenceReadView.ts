@@ -3,6 +3,7 @@
 
 import type {ConclusionContractClaimReference} from '../../agent/core/conclusionContract';
 import type {DataEnvelope} from '../../types/dataContract';
+import {isPlainJsonObject} from '../../utils/isPlainJsonObject';
 import {wholeResultRowPredicate} from './scopedRowIdentity';
 import {buildInvestigationEvidenceSnapshot, type InvestigationEvidenceSnapshot,
   type InvestigationToolObservation} from './investigationEvidenceLedger';
@@ -55,6 +56,35 @@ export interface EvidenceReadView {
   resolveReferences(requests: readonly EvidenceReadRequest[], signal?: AbortSignal): Promise<readonly EvidenceReadResolution[]>;
 }
 export interface EvidenceReadBudget {maxReferences: number; maxScannedRows: number; maxCells: number; maxElapsedMs: number; maxBytes: number}
+interface BatchRowRead {
+  values: Map<string, EvidenceScalar | undefined>;
+  nativeRow: ReturnType<typeof capturedNativeRow>;
+}
+interface BatchRecordRead {
+  witness: EvidenceTableWitness;
+  bytes: number;
+  admitted: boolean;
+  rows: Map<number, BatchRowRead>;
+}
+/** A shallow freeze or accessor does not make retained metadata immutable. */
+function immutableReadRecord(record: CapturedEvidenceRecord): boolean {
+  const pending: object[] = [record];
+  const seen = new Set<object>();
+  while (pending.length) {
+    const value = pending.pop()!;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    if (!Object.isFrozen(value)) return false;
+    if (!Array.isArray(value) && !isPlainJsonObject(value)) return false;
+    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+      if (!('value' in descriptor)) return false;
+      const child = descriptor.value;
+      if (typeof child === 'function') return false;
+      if (child && typeof child === 'object') pending.push(child);
+    }
+  }
+  return true;
+}
 /**
  * Upper bound on the references one conclusion may resolve. The witness ledger
  * that answers those references must retain at least this many captures, or a
@@ -187,6 +217,9 @@ export function createEvidenceReadView(records: () => readonly EvidenceReadRecor
     let cells = 0;
     let bytes = 0;
     const available = records();
+    // Only this batch shares immutable reads. Registration identity (including
+    // generation) and witness stay distinct; every locator still passes the guards.
+    const batchReads = new Map<CapturedEvidenceRecord, BatchRecordRead>();
     const expired = () => Boolean(signal?.aborted) || Date.now() >= deadline;
     const out: EvidenceReadResolution[] = [];
     for (const request of requests) {
@@ -212,15 +245,23 @@ export function createEvidenceReadView(records: () => readonly EvidenceReadRecor
       if (record.meta.executionStatus === 'unavailable' || record.meta.executionStatus === 'optional_error') {fail('missing', 'execution_unavailable'); continue;}
       if (record.meta.executionStatus === 'skipped') {fail('missing', 'execution_skipped'); continue;}
       if (new Set(table.columns).size !== table.columns.length) {fail('ambiguous', 'duplicate_evidence_columns'); continue;}
+      const previous = batchReads.get(record);
+      const reusable = (previous !== undefined || immutableReadRecord(record))
+        && Object.isFrozen(table) && Object.isFrozen(witness);
+      const recordRead = previous?.witness === witness ? previous : {
+        witness, bytes: JSON.stringify(record).length * 2, admitted: false, rows: new Map<number, BatchRowRead>(),
+      };
+      if (reusable) batchReads.set(record, recordRead);
       const ref = request.reference;
       if (request.metadataOnly) {
         if (request.requiredColumns.length || ['rowIndex', 'rowSelector', 'column', 'value']
           .some(field => Object.prototype.hasOwnProperty.call(ref, field))) {
           fail('missing', 'invalid_metadata_locator'); continue;
         }
-        const readBytes = JSON.stringify(record).length * 2;
+        const readBytes = recordRead.admitted ? 0 : recordRead.bytes;
         if (bytes + readBytes > budget.maxBytes || expired()) {fail('incomplete', 'evidence_read_size_or_deadline_exhausted'); continue;}
         bytes += readBytes;
+        recordRead.admitted = true;
         const resolution: EvidenceReadResolution = freezeEvidenceValue({key: request.key, status: 'resolved', record});
         resolutions.set(resolution, {witness, fields: []});
         out.push(resolution);
@@ -274,21 +315,32 @@ export function createEvidenceReadView(records: () => readonly EvidenceReadRecor
       }
       const wholeRow = !ref.column && request.requiredColumns.length === 0;
       if (rowIndex !== undefined && wholeRow) table.columns.forEach(column => needed.add(column));
-      if (rowIndex !== undefined && cells + needed.size > budget.maxCells) {fail('incomplete', 'cell_read_budget_exhausted'); continue;}
+      const priorRow = rowIndex !== undefined ? recordRead.rows.get(rowIndex) : undefined;
+      const cachedRow = priorRow?.nativeRow === nativeRow ? priorRow : undefined;
+      const additionalColumns = [...needed].filter(column => !cachedRow?.values.has(column));
+      if (rowIndex !== undefined && cells + additionalColumns.length > budget.maxCells) {fail('incomplete', 'cell_read_budget_exhausted'); continue;}
       const row: Record<string, EvidenceScalar> = Object.create(null);
+      const values = new Map(cachedRow?.values);
       if (rowIndex !== undefined) {
-        cells += needed.size;
+        cells += additionalColumns.length;
         for (const column of needed) {
-          const value = table.rows[rowIndex][table.columns.indexOf(column)];
+          const value = values.has(column) ? values.get(column) : table.rows[rowIndex][table.columns.indexOf(column)];
           if (value === undefined && (requested.has(column) || wholeRow)) {failed = true; break;}
+          values.set(column, value);
           if (value !== undefined) row[column] = value;
         }
       }
       if (failed) {fail('missing', 'unsupported_raw_cell'); continue;}
-      const readBytes = JSON.stringify(record).length * 2 + (nativeRow ? JSON.stringify(nativeRow).length * 2 : 0) + Object.entries(row).reduce((total, [column, value]) =>
-        total + column.length * 6 + (typeof value === 'string' ? value.length * 6 : 32), 0);
+      const readBytes = (recordRead.admitted ? 0 : recordRead.bytes)
+        + (nativeRow && !cachedRow ? JSON.stringify(nativeRow).length * 2 : 0)
+        + additionalColumns.reduce((total, column) => {
+          const value = row[column];
+          return value === undefined ? total : total + column.length * 6 + (typeof value === 'string' ? value.length * 6 : 32);
+        }, 0);
       if (bytes + readBytes > budget.maxBytes || expired()) {fail('incomplete', 'evidence_read_size_or_deadline_exhausted'); continue;}
       bytes += readBytes;
+      recordRead.admitted = true;
+      if (rowIndex !== undefined) recordRead.rows.set(rowIndex, {values, nativeRow});
       const resolution: EvidenceReadResolution = freezeEvidenceValue({key: request.key, status: 'resolved', record,
         ...(rowIndex !== undefined ? {originalRowIndex: rowIndex, row} : {})});
       resolutions.set(resolution, {witness, rowIndex, fields: [...needed]});
