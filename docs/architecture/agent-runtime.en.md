@@ -446,9 +446,13 @@ A runtime records only native facts on its result and on the turn it adds to
 the session (completion status, turn limit, timeout, provider failure,
 cancellation, an empty body, a privacy replacement). It never applies the
 quality gate, never marks a result `quality_gate_failed` and emits no draft
-`degraded` update; `partial`, `terminationReason` and confidence for quality
-reasons are written by the finalizer, and the route and CLI annotate the
-recorded turn afterwards.
+`degraded` update. The finalizer records a quality termination only for a missing
+body or actual native delivery failure; the route and CLI annotate that turn.
+Claim, report, source and identity verification remain independent annotations.
+They never make a completed body partial, lower finding confidence or mark
+flagged claims verified. The Web flow completes with a verification notice and
+expandable details; CLI `~` denotes delivered output with unresolved checks or
+flagged contradictions.
 
 The product takes the context from the exact result before copying it. The
 context fixes the provider, original absolute deadline, trace identity and
@@ -458,8 +462,8 @@ and uses the original absolute run deadline. Starting or rereading the review
 does not reset or extend that budget. User cancellation or context disposal
 aborts the review. A timeout records unavailable assurance while preserving the body
 and native completion; review does not rewrite the body or reduce causal
-propositions to numeric ones. Unknown review alone does not fail a focused answer;
-full reports still require their report-assessment contract. The body, native completion and original claims
+propositions to numeric ones. Unknown or failed review does not block answer or
+report delivery; report-contract gaps remain visible annotations. The body, native completion and original claims
 are independent inputs; valid JSON and model agreement alone are not proof.
 
 A malformed review location cannot establish that the body is wrong: an

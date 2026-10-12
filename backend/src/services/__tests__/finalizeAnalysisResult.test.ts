@@ -594,7 +594,7 @@ describe('deliver first, verify after', () => {
 
   it.each([
     {report: false, verdict: 'unverified'},
-    {report: true, verdict: 'partial'},
+    {report: true, verdict: 'unverified'},
   ])('a review-only stop still finalizes the delivered answer (report=$report -> $verdict)', async ({report, verdict}) => {
     const run = fixture({currentRead: true, report, dispatch: pendingReview});
     const stop = new AbortController();
@@ -1073,7 +1073,10 @@ describe('shared final analysis boundary', () => {
       expect(final.result.claimVerificationResult).toMatchObject({status: 'failed', passed: false,
         claimResults: [{status: 'unsupported', deterministicProof: {status: 'proved'},
           numericPresentation: {status: 'mismatch', reason: 'display_value_mismatch'}}]});
-      expect(final.result.terminationMessage).toContain('正文数值与原始证据的换算或舍入结果不符');
+      expect(final.result.terminationReason).toBeUndefined();
+      expect(final.result.partial).not.toBe(true);
+      expect(final.result.claimVerificationResult?.issues).toContainEqual(expect.objectContaining({
+        code: 'numeric_presentation_mismatch', severity: 'error'}));
     });
 
     it('does not turn an unresolved binding into verification through model agreement', async () => {
@@ -1660,7 +1663,7 @@ describe('shared final analysis boundary', () => {
     expect(finalized.result.claimVerificationResult).toMatchObject({passed: false,
       claimResults: [{claimId: 'count', status: 'partial', deterministicProof: {status: 'proved'}}]});
     expect(finalized.result.deliveryAssurance).toMatchObject({completion: 'passed', claims: 'coverage_incomplete'});
-    expect(finalized.result.partial === true).toBe(report);
+    expect(finalized.result.partial).not.toBe(true);
     expect(target.dispatch).toHaveBeenCalledTimes(1);
     expect(target.dispatch.mock.calls[0][0].signal?.aborted).toBe(true);
     expect(() => target.context.runId).toThrow();
@@ -1689,7 +1692,7 @@ describe('shared final analysis boundary', () => {
     expect(finalized.result.claimVerificationResult).toMatchObject({status: 'passed', passed: true, checkedClaimCount: 1,
       claimResults: [{status: 'verified', deterministicProof: {status: 'proved'}}]});
     expect(finalized.result.deliveryAssurance).toMatchObject({claims: 'passed', report: 'coverage_incomplete'});
-    expect(finalized.result.partial).toBe(true);
+    expect(finalized.result.partial).not.toBe(true);
     expect(finalized.semanticAssessment).toMatchObject({status: 'coverage_incomplete',
       responseDiagnostic: {stage: 'report_requirement', code: 'invalid_reference'}});
   });
@@ -1740,7 +1743,7 @@ describe('shared final analysis boundary', () => {
       query: 'Compare', comparisonIdentity: {currentTraceId: 'old-current', referenceTraceId: 'old-reference',
         currentResolution: resolution('old-current', 'current'), referenceResolution: resolution('old-reference', 'reference')}});
     expect(result.deliveryAssurance?.identity).not.toBe('passed');
-    expect(result.partial).toBe(true);
+    expect(result.partial).not.toBe(true);
   });
 
   it('rejects a mismatching proposition even when its reference value is correct', async () => {

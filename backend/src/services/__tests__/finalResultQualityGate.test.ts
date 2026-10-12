@@ -307,7 +307,7 @@ describe('final result quality gate', () => {
     })).toBeUndefined();
   });
 
-  it('marks quick answers with failed claim verification as partial', () => {
+  it('delivers a completed quick answer with failed verification retained as an annotation', () => {
     const quickRun: NonNullable<AnalysisResult['quickRun']> = {
       requestedMode: 'fast',
       resolvedMode: 'quick',
@@ -360,10 +360,28 @@ describe('final result quality gate', () => {
       query: '这条 trace 的滑动总帧数和 janky frame 数是多少？',
     });
 
-    expect(issue?.code).toBe('verifier_contradicted_claim');
+    expect(issue).toBeUndefined();
+    expect(target.partial).not.toBe(true);
+    expect(target.terminationReason).toBeUndefined();
+    expect(target.terminationMessage).toBeUndefined();
+    expect(target.confidence).toBe(0.8);
+    expect(target.deliveryAssurance).toMatchObject({completion: 'passed', claims: 'failed'});
+    expect(target.claimVerificationResult).toMatchObject({status: 'failed', passed: false, unsupportedClaimCount: 1});
+    expect(assessFinalResultQualityAssessment({result: target, context: finalizationContext(target)}).issues)
+      .toContainEqual(expect.objectContaining({code: 'verifier_contradicted_claim'}));
+  });
+
+  it('still marks an incomplete native answer when verification notices precede its lifecycle failure', () => {
+    const target = result({claimVerificationResult: {schemaVersion: 'claim_verifier@2', policy: 'record_only',
+      status: 'failed', passed: false, checkedClaimCount: 1, unsupportedClaimCount: 1,
+      claimResults: [{claimId: 'bad', status: 'unsupported'}],
+      issues: [{claimId: 'bad', severity: 'error', code: 'numeric_presentation_mismatch', message: 'Wrong value'}]}});
+    const context = finalizationContext(target);
+    if (context.entry === 'historical_restore' || !context.completion) throw new Error('fixture missing completion');
+    context.completion = {...context.completion, status: 'incomplete', reason: 'output_limit'};
+    expect(applyFinalResultQualityGate({result: target, context})).toMatchObject({code: 'sdk_incomplete'});
     expect(target.partial).toBe(true);
-    expect(issue?.message.trim()).toBeTruthy();
-    expect(target.terminationMessage).toBe(issue?.message);
+    expect(target.deliveryAssurance).toMatchObject({completion: 'failed', claims: 'failed'});
   });
 
   it('does not reject a deliverable based on quick budget or report headings', () => {
@@ -2357,12 +2375,12 @@ describe('unverified claims are not contradicted claims (Round 60 SP-E2E-09)', (
       issues: [{claimId: 'readable-later', severity: 'warning', code: 'claim_reference_unverified', message: 'display_transformation_unmapped'},
         {claimId: 'cl-render', severity: 'error', code: 'claim_reference_value_mismatch', message: 'value mismatch for ts'}]}));
     expect(mismatch.selectedIssue?.code).toBe('verifier_contradicted_claim');
-    expect(mismatch.selectedIssue?.message).toBe('1 条断言的引用值与证据不符；不能作为已核验结论交付。');
+    expect(mismatch.selectedIssue?.message).toBe('1 条断言的引用值与证据不符；请展开核验详情并结合证据判断。');
     expect(mismatch.assurance.claims).toBe('failed');
   });
 });
 
-describe('a contradicted claim degrades full mode, not only quick mode', () => {
+describe('contradicted claim annotations in full and quick mode', () => {
   function verification(overrides: Record<string, unknown> = {}) {
     return {
       schemaVersion: 'claim_verifier@1',
@@ -2443,7 +2461,7 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
           referenceCells: [{status: 'missing', message}],
           deterministicProof: {kind: 'none', status: 'rejected', reason: 'binding_ineligible', anchorIds: [], evidenceRefIds: []}}],
         issues: [{claimId: 'declaration', severity: 'error', code: 'binding_ineligible', message}]});
-      expect(text).toBe('1 条断言的声明或绑定无效，相关断言未通过核验准入；不能作为已核验结论交付。');
+      expect(text).toBe('1 条断言的声明或绑定无效，相关断言未通过核验准入；请展开核验详情并结合证据判断。');
     },
   );
 
@@ -2452,7 +2470,7 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
       referenceCells: [{status: 'matched'}],
       deterministicProof: {kind: 'numeric_cell', status: 'rejected', reason: 'numeric_operator_rejected', anchorIds: [], evidenceRefIds: []}}],
       issues: [{claimId: 'numeric', severity: 'error', code: 'numeric_operator_rejected', message: 'arbitrary provider wording'}]});
-    expect(text).toBe('1 条断言的命题未通过确定性证明；不能作为已核验结论交付。');
+    expect(text).toBe('1 条断言的命题未通过确定性证明；请展开核验详情并结合证据判断。');
   });
 
   it.each(['proof', 'reference'])('recognizes a typed binding rejection from %s without prose or issue hints', source => {
@@ -2461,7 +2479,7 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
         referenceCells: [{status: source === 'reference' ? 'ineligible' : 'missing'}],
         ...(source === 'proof' ? {deterministicProof: {kind: 'none', status: 'rejected', reason: 'binding_ineligible',
           anchorIds: [], evidenceRefIds: []}} : {})}], issues: []});
-    expect(text).toBe('1 条断言的声明或绑定无效，相关断言未通过核验准入；不能作为已核验结论交付。');
+    expect(text).toBe('1 条断言的声明或绑定无效，相关断言未通过核验准入；请展开核验详情并结合证据判断。');
   });
 
   it.each(['', 'unassociated-claim'])('does not let global binding issue %s hide another claim failure', claimId => {
@@ -2493,14 +2511,14 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
         referenceCells, referenceResults: [{status: 'missing'}, {status: 'value_mismatch'}],
         deterministicProof: {kind: 'numeric_cell', status: 'rejected', reason: 'numeric_operator_rejected', anchorIds: [], evidenceRefIds: []}}],
         issues: [{claimId: 'numeric', severity: 'error', code: 'numeric_operator_rejected', message: 'arbitrary'}]});
-      expect(text).toBe('1 条断言的命题未通过确定性证明；不能作为已核验结论交付。');
+      expect(text).toBe('1 条断言的命题未通过确定性证明；请展开核验详情并结合证据判断。');
     },
   );
 
   it('falls back to absent v2 referenceCells and counts claim IDs without duplicate reference inflation', () => {
     const text = failedDiagnostic({schemaVersion: 'claim_verifier@2', claimResults: [{claimId: 'numeric', status: 'unsupported',
       referenceResults: [{status: 'value_mismatch'}, {status: 'value_mismatch'}]}]});
-    expect(text).toBe('1 条断言的引用值与证据不符；不能作为已核验结论交付。');
+    expect(text).toBe('1 条断言的引用值与证据不符；请展开核验详情并结合证据判断。');
   });
 
   it('keeps advisory reference findings out of the message and names only recorded failures', () => {
@@ -2513,7 +2531,7 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
       {claimId: 'c2', severity: 'warning', code: 'claim_reference_missing', message: 'no captured value'},
       {claimId: '', severity: 'error', code: 'semantic_undeclared_claim', message: 'arbitrary'},
     ]});
-    expect(undeclaredOnly).toBe('正文包含未声明的断言；不能作为已核验结论交付。');
+    expect(undeclaredOnly).toBe('正文包含未声明的断言；请展开核验详情并结合证据判断。');
     // A semantic contradiction does not turn its advisory reference mismatch into an evidence mismatch.
     const semantic = failedDiagnostic({schemaVersion: 'claim_verifier@2', claimResults: [
       {claimId: 'c1', status: 'unsupported', referenceCells: [{status: 'value_mismatch'}]},
@@ -2521,7 +2539,7 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
       {claimId: 'c1', severity: 'warning', code: 'claim_reference_value_mismatch', message: 'value mismatch for ts'},
       {claimId: 'c1', severity: 'error', code: 'semantic_numeric_mismatch', message: 'arbitrary'},
     ]});
-    expect(semantic).toBe('1 条断言的正文表述与其声明不一致；不能作为已核验结论交付。');
+    expect(semantic).toBe('1 条断言的正文表述与其声明不一致；请展开核验详情并结合证据判断。');
   });
 
   it('classifies semantic review inconsistencies per claim and body omissions', () => {
@@ -2532,13 +2550,13 @@ describe('a contradicted claim degrades full mode, not only quick mode', () => {
       {claimId: 'c:ttid', severity: 'error', code: 'semantic_scope_mismatch', message: 'arbitrary'},
       {claimId: '', severity: 'error', code: 'semantic_undeclared_claim', message: 'arbitrary'},
     ]});
-    expect(text).toBe('1 条断言的正文表述与其声明不一致；正文包含未声明的断言；不能作为已核验结论交付。');
+    expect(text).toBe('1 条断言的正文表述与其声明不一致；正文包含未声明的断言；请展开核验详情并结合证据判断。');
   });
 
   it('describes unclassified failure without inventing a count or missing evidence', () => {
     const text = failedDiagnostic({schemaVersion: 'claim_verifier@2', checkedClaimCount: 0, unsupportedClaimCount: 9,
       claimResults: [], issues: [{claimId: '', severity: 'error', code: 'unknown_error_code', message: '引用的证据行或列未找到'}]});
-    expect(text).toBe('断言核验存在未通过的检查，具体原因尚未归类；不能作为已核验结论交付。');
+    expect(text).toBe('断言核验存在未通过的检查，具体原因尚未归类；请展开核验详情并结合证据判断。');
   });
 
   it('leaves a passing verification alone', () => {

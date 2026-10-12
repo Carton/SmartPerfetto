@@ -56,8 +56,14 @@ Keep these boundaries intact:
   terminal message. No engine calls `applyFinalResultQualityGate`; the
   finalizer applies it to the exact candidate once (after joining
   `claim_verifier@2`, so the gate reads verification results and never
-  classifies prose), and the route and CLI then annotate the recorded turn and
-  publish the gate's `degraded` update. `quickRun.stopReason` describes the
+  classifies prose). Only missing body or native completion/lifecycle failures
+  return a blocking quality issue and publish a `degraded` update. Claim,
+  report, source and identity verification remain independent annotations;
+  their errors or unknown coverage never make a completed body partial, lower
+  its finding confidence or label its claims verified. The Web flow completes
+  with a verification notice and expandable details; CLI `~` means delivered
+  with outstanding verification, including flagged contradictions.
+  `quickRun.stopReason` describes the
   delivered candidate's native state; the privacy projection re-derives it when
   it replaces the body (`refreshQuickRunStopReason`). Self-Evolution replay, which never enters the
   finalizer, records the native termination reason. Guarded by

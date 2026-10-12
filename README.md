@@ -152,7 +152,7 @@ Pi users can configure reasoning in model JSON; see the [Pi configuration](docs/
 4. Ask a question such as `Analyze scrolling jank`, `Why is startup slow?`, or
    `Analyze the ANR in this trace`.
 
-Server verification details are collapsed by default; expand them to read the full record. Verification warnings remain visible.
+Server verification details are collapsed by default; expand them to read the full record. Verification warnings remain visible. Completed analyses are delivered normally, with verification concerns and coverage gaps labelled separately for users to assess against the evidence.
 Web, CLI and exported reports retain each claim's evidence and verification
 status. A malformed claim leaves other valid claims eligible for checking;
 missing proof and a contradicted claim remain distinct outcomes.

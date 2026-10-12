@@ -641,8 +641,14 @@ missing (`uncoveredFacets` names each unproved fact and proof check), and
 value, delivery, the hard flags (`--require-claim-verifier-ok`,
 `--require-non-partial`) and the other observed checks; a proof gap alone
 does not fail it. `--strict` requires `semanticAcceptance: PASSED` and every
-hard flag; only `--strict` (or the original gate flags) counts as PR or
-release acceptance. The flat `checks` map stays the union of the groups plus
+hard flag. It measures complete verification acceptance; it does not decide
+whether a readable analysis may be delivered. Ordinary PR/release acceptance
+uses the applicable repository gates and exercises native completion, readable
+body/report delivery and preserved, honestly labelled verification annotations
+across the affected surfaces. Missing proof or a failed semantic review is
+recorded separately and must never be reported as a strict pass. Real lifecycle,
+authorization and privacy failures still fail their own gates. The flat `checks`
+map stays the union of the groups plus
 the earlier key names, so existing readers keep their meaning. A run with no
 judged report (stream timeout, lifecycle failure, or a verifier whose loop
 drained before a verdict, which exits 1 with `verification_unsettled`) is

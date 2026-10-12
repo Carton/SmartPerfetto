@@ -167,7 +167,7 @@ function describeContradictedClaims(
     ...(semanticInconsistentIds.size ? [`${semanticInconsistentIds.size} 条断言的正文表述与其声明不一致`] : []),
     ...(undeclaredAssertions ? ['正文包含未声明的断言'] : []),
   ];
-  return `${details.length ? details.join('；') : '断言核验存在未通过的检查，具体原因尚未归类'}；不能作为已核验结论交付。`;
+  return `${details.length ? details.join('；') : '断言核验存在未通过的检查，具体原因尚未归类'}；请展开核验详情并结合证据判断。`;
 }
 
 export interface FinalResultQualityInput {
@@ -428,7 +428,12 @@ export function applyFinalResultQualityGate(input: FinalResultQualityInput): Fin
   if (assessment.sourceClaimVerification) {
     result.sourceClaimVerificationResult = assessment.sourceClaimVerification;
   }
-  const issue = assessment.selectedIssue;
+  // Verification is independent annotation on the delivered body. Only an
+  // actual delivery/lifecycle failure makes the analysis partial; a failed or
+  // unavailable review must not discard the answer, alter native completion,
+  // lower its finding confidence or present it as verified.
+  const issue = assessment.issues.find(({code}) => code === 'empty_conclusion' ||
+    code === 'sdk_incomplete' || code === 'runtime_fallback' || code === 'completion_not_checked');
   if (!issue) return undefined;
   result.partial = true;
   result.confidence = Math.min(result.confidence || 0, 0.55);

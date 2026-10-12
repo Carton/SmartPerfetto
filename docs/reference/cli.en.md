@@ -102,10 +102,11 @@ seconds for locks; separate directories isolate test state and do not replace
 investigation of persistent contention.
 
 Session markers: `✓` delivered with checks passed or not applicable; `~`
-delivered but checks did not complete (for example an invalid conclusion
-declaration or a timed-out semantic review) — do not treat it as verified; `!`
-the run did not finish, or claims contradicted the evidence and quality checks
-failed; `✗` failed. The claim-verification line under the conclusion separates
+delivered with outstanding verification (for example an invalid declaration,
+review timeout or flagged contradiction) — inspect the details before relying
+on those claims; `!` the analysis did not finish; `✗` failed. Verification issues
+do not block the body or report, and never become a passing check merely because
+delivery finished. The claim-verification line under the conclusion separates
 claims whose references matched the captured evidence, propositions a finite
 proof established, claims the whole review verified, contradicted claims and
 values rounded without an approximation marker (unverified, not contradicted);
@@ -121,7 +122,7 @@ the text output omits it. JSON/NDJSON `complete` events carry `deliveryVerdict`
 Incomplete runs display their termination reason and available diagnostics,
 distinguishing absent narrative from narrative that failed quality checks.
 JSON/NDJSON also retain `terminationMessage` and `hasConclusion`.
-`quality_gate_failed` can mean invalid declarations or evidence bindings, not
+`quality_gate_failed` describes a missing body or native delivery failure, not
 missing report sections. A budget above one reserves one no-tool summary of
 returned data, findings, gaps and next steps; exhaustion remains `partial` /
 `max_turns`. The original deadline, authorization and explicit cost budget still

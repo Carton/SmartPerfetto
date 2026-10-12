@@ -303,15 +303,17 @@ exact runtime result + private RuntimeFinalizationContext
 
 runtime 在结果和写入会话的轮次上只记录原生事实（完成状态、轮次上限、超时、provider 失败、
 取消、空正文、隐私替换），不调用质量闸门、不写 `quality_gate_failed`、不发草稿阶段的
-`degraded`；因质量问题而定的 `partial`、`terminationReason` 和置信度由 finalizer 写入，
-路由与 CLI 随后回写已记录的轮次。
+`degraded`；finalizer 仅因空正文或真实原生交付失败写入质量终止状态，路由与 CLI
+随后回写已记录的轮次。断言、报告、源码和身份核验作为独立标注保留，不使已完成正文
+变为 partial、不降低发现置信度，也不将存在疑点的断言标为 verified。Web 流程正常
+完成并显示核验提示与可展开详情，CLI 用 `~` 标记已交付但仍有未核验项或疑点的结果。
 
 产品必须在复制结果前从 exact result 取出 context。context 固定 provider、原始绝对
 deadline、trace identity 和证据读取范围；产品 owner 在 await 前后检查当前 run、取消和
 授权。语义审核最多一次、无工具，沿用原始绝对 deadline；开始审核或重复读取结果不会
 重置或延长预算。用户取消或释放 context 会中止审核。
 审核超时记录为 unavailable，保留原正文及 native completion，不重写正文或把因果命题降成数值
-命题。审核未知不单独使简短回答失败；完整报告仍需要满足其报告审核契约。
+命题。审核未知或失败不阻止简短回答和报告交付；报告审核契约的缺口作为标注保留。
 正文、真实 native completion 和原始 claim 是不同输入；合法 JSON 和模型审核
 一致都不能单独成为证明。
 

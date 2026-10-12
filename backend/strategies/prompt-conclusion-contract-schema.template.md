@@ -19,7 +19,7 @@ Fence JSON only. Keep its HTML comment outside prose/fences; never print an old 
 `mode`: `initial_report|focused_answer|need_input`. Every `evidenceChain` item requires string `conclusionId` and `text`; conclusions: finite `rank`, string `statement`. Never author status, `parseIssues`, `bindingEligibility`, `verified`, completion receipts or `raw*` fields.
 
 Every claim requires unique `id`, faithful `text`, `kind`, `references`, `semantics`; optional: `conclusionId`, `artifactRefs`, `relationRefs`. Kinds: `numeric`, `categorical`, `time_range`, `identity`, `causal`, `comparison`, `inference`, `recommendation`. Choose each stance.
-Before a final report use `check_conclusion_draft` if available; resolve diagnostics. It does not check coverage.
+`check_conclusion_draft`: advisory; fix real mistakes, retain uncertainty, deliver. No pass-chasing or coverage check.
 One proposition/claim; separate values, types, classifications and qualifiers. Cell predicates select one subject, no grouped row. Aggregates are one value, not `all` members. Never disguise observations as possible inferences.
 
 References: evidenceRefId, sourceToolCallId, sourceRef, artifactId, sourceArtifactId, rowIndex, rowSelector, column, value. Use issued IDs, raw JSON types/full precision; unquoted numbers. Executions may share evidenceRefId. rowIndex: printed index, not page position (unindexed: 0). rowSelector: unique column map, e.g. {"dump_id":1,"c":83}. Cells need locators; totalRows is metadata. Missing: `[]`, uncertainty. For successful empty results, cite only their emitted IDs; omit rowIndex/rowSelector/column/value (no row 0).
