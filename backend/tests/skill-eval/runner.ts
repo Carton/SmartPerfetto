@@ -51,6 +51,7 @@ export interface EvalSkillResult {
   success: boolean;
   skillId: string;
   layers: LayeredResult['layers'];
+  stepResults?: LayeredResult['stepResults'];
   displayResults: any[];
   executionTimeMs: number;
   error?: string;
@@ -339,6 +340,14 @@ export class SkillEvaluator {
       { traceId: this.traceId }
     );
 
+    return this.extractStepResult(result, stepId);
+  }
+
+  /** Read a step from an existing execution without rerunning SQL or changing context. */
+  extractStepResult(
+    result: Pick<LayeredResult, 'layers' | 'stepResults'>,
+    stepId: string,
+  ): EvalStepResult {
     // 从分层结果中提取指定步骤
     const stepResult = this.findStepInLayers(result.layers, stepId)
       || result.stepResults?.find(step => step.stepId === stepId)
@@ -666,6 +675,7 @@ export class SkillEvaluator {
         success: failedSteps.length === 0,
         skillId: this.skillId,
         layers: result.layers,
+        stepResults: result.stepResults,
         displayResults: [],
         executionTimeMs: Date.now() - startTime,
         error: failedSteps.length > 0

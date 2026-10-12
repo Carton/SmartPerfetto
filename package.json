@@ -51,7 +51,8 @@
     "check:orphaned-modules": "node scripts/check-orphaned-modules.mjs",
     "check:unused-exports": "node scripts/check-unused-exports.mjs",
     "ci:scope": "node scripts/ci-change-scope.cjs",
-    "verify:ci": "npm run test:governance && npm run verify:docs && npm run verify:i18n && npm run verify:rendering-pipelines && npm run quality && npm run check:frontend-prebuild"
+    "verify:ci": "npm run test:governance && npm run verify:docs && npm run verify:i18n && npm run verify:rendering-pipelines && npm run quality && npm run check:frontend-prebuild",
+    "verify:dev": "npm run verify:ci && npm --prefix backend run verify:ci"
   },
   "engines": {
     "node": ">=24.0.0 <25.0.0"

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
-import { SkillEvaluator, createSkillEvaluator, getTestTracePath, describeWithTrace } from './runner';
+import { SkillEvaluator, createSkillEvaluator, getTestTracePath, describeWithTrace, type EvalSkillResult, type EvalStepResult } from './runner';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -18,6 +18,9 @@ const TRACE_FILE = 'android-scroll-customer';
 
 describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
   let evaluator: SkillEvaluator;
+  let defaultResult: EvalSkillResult;
+  let inputEvidenceResult: EvalStepResult;
+  const defaultStep = (stepId: string) => evaluator.extractStepResult(defaultResult, stepId);
 
   beforeAll(async () => {
     evaluator = createSkillEvaluator('scrolling_analysis');
@@ -29,7 +32,14 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
     `);
     expect(result.error).toBeUndefined();
     expect(result.rows[0][0]).toBeGreaterThan(0);
-  }, 60000); // 60 秒超时用于加载 trace
+
+    // Field assertions share real full executions with identical trace/parameters.
+    // Parameter changes and separate runtime/trace checks still execute independently.
+    defaultResult = await evaluator.executeSkill();
+    inputEvidenceResult = await evaluator.executeStep('batch_frame_root_cause', {
+      max_frames_per_session: 3,
+    });
+  }, 120000);
 
   afterAll(async () => {
     await evaluator.cleanup();
@@ -44,14 +54,14 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
   describe('L1: Overview Layer', () => {
     describe('vsync_config step', () => {
       it('should return vsync configuration data', async () => {
-        const result = await evaluator.executeStep('vsync_config');
+        const result = defaultStep('vsync_config');
 
         expect(result.success).toBe(true);
         expect(result.data).toHaveLength(1);
       }, 30000);
 
       it('should have valid refresh rate (60-240 Hz)', async () => {
-        const result = await evaluator.executeStep('vsync_config');
+        const result = defaultStep('vsync_config');
         const config = result.data[0];
 
         // 现代设备支持高刷新率，如 90Hz, 120Hz, 144Hz, 165Hz, 170Hz, 240Hz
@@ -60,7 +70,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid vsync period', async () => {
-        const result = await evaluator.executeStep('vsync_config');
+        const result = defaultStep('vsync_config');
         const config = result.data[0];
 
         // vsync_period_ms 应该在 4.17ms (240Hz) 到 16.67ms (60Hz) 之间
@@ -69,7 +79,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should indicate data availability', async () => {
-        const result = await evaluator.executeStep('vsync_config');
+        const result = defaultStep('vsync_config');
         const config = result.data[0];
 
         expect(config.has_data).toBe(1);
@@ -79,14 +89,14 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
 
     describe('performance_summary step', () => {
       it('should return performance metrics', async () => {
-        const result = await evaluator.executeStep('performance_summary');
+        const result = defaultStep('performance_summary');
 
         expect(result.success).toBe(true);
         expect(result.data).toHaveLength(1);
       }, 30000);
 
       it('should have valid frame counts', async () => {
-        const result = await evaluator.executeStep('performance_summary');
+        const result = defaultStep('performance_summary');
         const summary = result.data[0];
 
         expect(summary.total_frames).toBeGreaterThan(0);
@@ -96,7 +106,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid jank rate (0-100%)', async () => {
-        const result = await evaluator.executeStep('performance_summary');
+        const result = defaultStep('performance_summary');
         const summary = result.data[0];
 
         expect(summary.jank_rate).toBeGreaterThanOrEqual(0);
@@ -104,7 +114,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid FPS metrics', async () => {
-        const result = await evaluator.executeStep('performance_summary');
+        const result = defaultStep('performance_summary');
         const summary = result.data[0];
 
         // actual_fps 应该是正数；高刷设备/trace 可能超过 200
@@ -115,14 +125,14 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid performance rating', async () => {
-        const result = await evaluator.executeStep('performance_summary');
+        const result = defaultStep('performance_summary');
         const summary = result.data[0];
 
         expect(['优秀', '良好', '一般', '较差']).toContain(summary.rating);
       }, 30000);
 
       it('should have frame duration metrics', async () => {
-        const result = await evaluator.executeStep('performance_summary');
+        const result = defaultStep('performance_summary');
         const summary = result.data[0];
 
         // 帧时长应该在合理范围内（值为纳秒）
@@ -137,7 +147,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
 
     describe('input_data_check step', () => {
       it('should report input data availability without requiring input events', async () => {
-        const result = await evaluator.executeStep('input_data_check');
+        const result = defaultStep('input_data_check');
 
         expect(result.success).toBe(true);
         expect(result.data).toHaveLength(1);
@@ -153,7 +163,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
 
     describe('jank_type_stats step', () => {
       it('should return jank type distribution', async () => {
-        const result = await evaluator.executeStep('jank_type_stats');
+        const result = defaultStep('jank_type_stats');
 
         expect(result.success).toBe(true);
         // The fixture has janky frames; empty means extraction regressed.
@@ -161,7 +171,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid jank type categories', async () => {
-        const result = await evaluator.executeStep('jank_type_stats');
+        const result = defaultStep('jank_type_stats');
         expect(result.success).toBe(true);
         expect(result.data.length).toBeGreaterThan(0);
 
@@ -183,7 +193,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
   describe('L2: List Layer', () => {
     describe('scroll_sessions step', () => {
       it('should detect scroll sessions', async () => {
-        const result = await evaluator.executeStep('scroll_sessions');
+        const result = defaultStep('scroll_sessions');
 
         expect(result.success).toBe(true);
         // 应该至少检测到一个滑动会话
@@ -191,7 +201,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid session structure', async () => {
-        const result = await evaluator.executeStep('scroll_sessions');
+        const result = defaultStep('scroll_sessions');
         expect(result.success).toBe(true);
         expect(result.data.length).toBeGreaterThan(0);
         const session = result.data[0];
@@ -210,7 +220,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid timestamps', async () => {
-        const result = await evaluator.executeStep('scroll_sessions');
+        const result = defaultStep('scroll_sessions');
         expect(result.success).toBe(true);
         expect(result.data.length).toBeGreaterThan(0);
         const session = result.data[0];
@@ -224,7 +234,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       }, 30000);
 
       it('should have valid FPS per session', async () => {
-        const result = await evaluator.executeStep('scroll_sessions');
+        const result = defaultStep('scroll_sessions');
         expect(result.success).toBe(true);
         expect(result.data.length).toBeGreaterThan(0);
 
@@ -245,14 +255,14 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
 
   describe('Full Skill Execution', () => {
     it('should execute complete skill successfully', async () => {
-      const result = await evaluator.executeSkill();
+      const result = defaultResult;
 
       expect(result.success).toBe(true);
       expect(result.skillId).toBe('scrolling_analysis');
     }, 120000);
 
     it('should have overview layer results', async () => {
-      const result = await evaluator.executeSkill();
+      const result = defaultResult;
       const overview = result.layers.overview;
 
       // 应该有 vsync_config 和 performance_summary
@@ -262,7 +272,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
     }, 120000);
 
     it('should have list layer results', async () => {
-      const result = await evaluator.executeSkill();
+      const result = defaultResult;
       const list = result.layers.list;
 
       // 应该有 scroll_sessions
@@ -282,7 +292,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
     }, 120000);
 
     it('should enforce max_frames_per_session for get_app_jank_frames', async () => {
-      const sessionJank = await evaluator.executeStep('session_jank');
+      const sessionJank = defaultStep('session_jank');
       const sortedJankSessions = [...sessionJank.data].sort(
         (a: any, b: any) => Number(b.janky_count || 0) - Number(a.janky_count || 0)
       );
@@ -291,7 +301,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
       // The customer scroll fixture has a session with at least 3 janky frames.
       expect(Number(target?.janky_count || 0)).toBeGreaterThanOrEqual(3);
 
-      const sessions = await evaluator.executeStep('scroll_sessions');
+      const sessions = defaultStep('scroll_sessions');
       const window = sessions.data.find(
         (row: any) => Number(row.session_id) === Number(target.session_id)
       );
@@ -325,9 +335,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
     }, 120000);
 
     it('should expose input evidence fields on batch root cause rows', async () => {
-      const result = await evaluator.executeStep('batch_frame_root_cause', {
-        max_frames_per_session: 3,
-      });
+      const result = inputEvidenceResult;
 
       expect(result.success).toBe(true);
       expect(result.data.length).toBeGreaterThan(0);
@@ -357,7 +365,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
     }, 120000);
 
     it('should produce consistent normalized output', async () => {
-      const result = await evaluator.executeSkill();
+      const result = defaultResult;
       const normalized = evaluator.normalizeForSnapshot(result);
 
       // 应该有合理数量的步骤结果
@@ -403,7 +411,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
 
   describe('input evidence', () => {
     it('should find the fixture input events matched to frames', async () => {
-      const result = await evaluator.executeStep('input_data_check');
+      const result = defaultStep('input_data_check');
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual([expect.objectContaining({input_data_status: 'available'})]);
@@ -411,9 +419,7 @@ describeWithTrace('scrolling_analysis skill', TRACE_FILE, () => {
     }, 60000);
 
     it('should keep batch root cause rows compatible with input evidence columns', async () => {
-      const result = await evaluator.executeStep('batch_frame_root_cause', {
-        max_frames_per_session: 3,
-      });
+      const result = inputEvidenceResult;
 
       expect(result.success).toBe(true);
       expect(result.data.length).toBeGreaterThan(0);

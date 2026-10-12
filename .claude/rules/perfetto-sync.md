@@ -51,8 +51,7 @@ Use this order unless the task has a narrower explicit scope:
    of the sync. Keep independent recording-tool pins separate unless the task
    explicitly updates them too. The UI talks to the backend processor over RPC
    and runs stdlib SQL of its own revision, so a UI synced to upstream main
-   needs a processor from the same revision (a v58.2 processor lacks the
-   flamegraph intrinsics and `machine_id` columns the v59-era UI queries).
+   needs a processor from the same revision.
    Google's LUCI post-submit CI publishes `trace_processor_shell` under
    `<commit>/<platform>/` for some main commits: merge the submodule at exactly
    a commit whose five platform artifacts all exist and pin
@@ -122,18 +121,9 @@ packaging verification tier in `.claude/rules/testing.md`.
 
 ## Landing Order
 
-If `perfetto/` changed:
-
-1. Commit inside `perfetto/`.
-2. Push the submodule commit to the `fork` remote, never upstream `origin`.
-3. Confirm the pushed commit is anchored to `fork/main` with the anchoring
-   check in `.claude/rules/git.md`, not merely present on some `fork` branch.
-4. Return to the root repository.
-5. Stage the root gitlink, refreshed `frontend/`, updated pins, regenerated
-   SQL/stdlib data, and Skill/Strategy changes that belong to the sync.
-6. Commit and push the root repository only after that anchoring check passes.
-
-Do not push a root commit that points at a local-only Perfetto submodule commit.
+Follow [git](git.md#perfetto-landing-and-anchoring): push submodule changes to
+`fork/main` and prove anchoring before root gitlink/prebuild publication.
+Stage only task-owned pins, generated assets and Skill/Strategy changes.
 
 ## Review Checklist
 
@@ -147,12 +137,8 @@ Before calling the sync done, explicitly check:
 - Trace processor version and packaged prebuilts match the intended runtime pin.
 - SQL docs, stdlib symbols, Skills, and Strategies agree on the new Perfetto
   schema/stdlib capabilities.
-- Private stdlib tables that Skills read directly still exist with the shape
-  the Skill expects. `_android_process_state_intervals` changes right after
-  99234d73fe (e9603ed549 adds EXITED rows with `dur = -1` and pre-birth
-  NONEXISTENT rows); `android_process_state_residency` already excludes both
-  from alive time, but re-run its constructed case and read the rows rather
-  than trusting a green gate.
+- Private stdlib tables still have the shape/interval semantics affected Skills
+  expect. Run their constructed cases and inspect changed rows, not just inventory.
 - Runtime-gated Skill layers (`runtime_lacks_*` capability statuses) still
   degrade explicitly on the previous release binary: run the affected Skills
   with `TRACE_PROCESSOR_PATH` pointing at it on their constructed cases.

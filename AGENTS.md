@@ -106,6 +106,9 @@ Read only the rules relevant to the touched area:
 | Perfetto upstream, processor and UI assets | [perfetto-sync](.claude/rules/perfetto-sync.md) |
 | Packaging and public release | [release](.claude/rules/release.md) |
 
-Before opening or landing a PR, run the complete local `npm run verify:pr` from
-the repository root. Hosted Actions use the smaller `verify:ci` tiers and
-path-scoped native/container checks; see [testing](.claude/rules/testing.md).
+During development, run the affected owning test tier; use root
+`npm run verify:dev` for the combined fast root/backend checks. It is not full
+acceptance. Before opening or landing a PR, run root `npm run verify:pr`; release
+gates remain separate. Reuse unchanged passing evidence instead of repeating
+checks after each edit. See [testing](.claude/rules/testing.md) for selection and
+[release](.claude/rules/release.md) for artifact acceptance.

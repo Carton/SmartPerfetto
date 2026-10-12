@@ -2,7 +2,7 @@
 // Copyright (C) 2024-2026 Gracker (Chris)
 // This file is part of SmartPerfetto. See LICENSE for details.
 
-import {describe, expect, it, beforeEach} from '@jest/globals';
+import {describe, expect, it, beforeEach, afterEach, jest} from '@jest/globals';
 import {Writable} from 'stream';
 import {exitAfterFlush, flushTimeoutMs, resetExitAfterFlushForTest} from '../exitAfterFlush';
 
@@ -11,8 +11,10 @@ function heldStream(options: {error?: Error} = {}): {stream: Writable; release: 
   let pending: ((error?: Error | null) => void) | undefined;
   const stream = new Writable({
     highWaterMark: 1,
-    write(_chunk, _encoding, callback) {
-      pending = callback;
+    write(chunk, _encoding, callback) {
+      // The flush marker carries no output and must not require a second release.
+      if (chunk.length === 0) callback();
+      else pending = callback;
     },
   });
   stream.write('queued output');
@@ -34,17 +36,31 @@ function recorder(): {codes: number[]; exit: (code: number) => void} {
   return {codes, exit: code => { codes.push(code); }};
 }
 
+async function expectFlushed(done: Promise<never>): Promise<void> {
+  let completed = false;
+  void done.then(() => { completed = true; });
+  // Drain real stream callbacks without advancing the fake flush deadline.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(completed).toBe(true);
+  expect(jest.getTimerCount()).toBe(0);
+  await done;
+}
+
 describe('exitAfterFlush', () => {
-  beforeEach(() => resetExitAfterFlushForTest());
+  beforeEach(() => {
+    jest.useFakeTimers({doNotFake: ['nextTick', 'setImmediate']});
+    resetExitAfterFlushForTest();
+  });
+  afterEach(() => { jest.useRealTimers(); });
 
   it('waits for queued output before exiting with the original code', async () => {
     const {stream, release} = heldStream();
     const {codes, exit} = recorder();
     const done = exitAfterFlush(3, {streams: [stream], timeoutMs: 5_000, exit, console: fakeConsole().console});
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await jest.advanceTimersByTimeAsync(20);
     expect(codes).toEqual([]);
     release();
-    await done;
+    await expectFlushed(done);
     expect(codes).toEqual([3]);
   });
 
@@ -54,11 +70,11 @@ describe('exitAfterFlush', () => {
     const {codes, exit} = recorder();
     const done = exitAfterFlush(0, {streams: [failing.stream, pending.stream], timeoutMs: 5_000, exit, console: fakeConsole().console});
     failing.release();
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await jest.advanceTimersByTimeAsync(20);
     // The other stream is still flushing: no exit yet.
     expect(codes).toEqual([]);
     pending.release();
-    await done;
+    await expectFlushed(done);
     expect(codes).toEqual([0]);
   });
 
@@ -67,7 +83,7 @@ describe('exitAfterFlush', () => {
     const {codes, exit} = recorder();
     const done = exitAfterFlush(1, {streams: [stream], timeoutMs: 5_000, exit, console: fakeConsole().console});
     release();
-    await done;
+    await expectFlushed(done);
     // Writable emits 'error' after the callback; an unhandled one would throw.
     await new Promise(resolve => setImmediate(resolve));
     expect(codes).toEqual([1]);
@@ -78,11 +94,12 @@ describe('exitAfterFlush', () => {
     const {codes, exit} = recorder();
     const done = exitAfterFlush(0, {streams: [stream], timeoutMs: 5_000, exit, console: fakeConsole().console});
     stream.destroy();
-    await done;
+    await expectFlushed(done);
     expect(codes).toEqual([0]);
   });
 
   it('bounds a reader that never drains', async () => {
+    jest.useRealTimers();
     const {stream} = heldStream();
     const {codes, exit} = recorder();
     const started = Date.now();
@@ -98,7 +115,7 @@ describe('exitAfterFlush', () => {
     await exitAfterFlush(1, {streams: [stream], timeoutMs: 5_000, exit, console: fakeConsole().console});
     expect(codes).toEqual([2]);
     release();
-    await first;
+    await expectFlushed(first);
     expect(codes).toEqual([2, 2]);
   });
 
@@ -111,7 +128,7 @@ describe('exitAfterFlush', () => {
     fake.console.log('[TraceProcessor] Process exited');
     fake.console.info('released port');
     release();
-    await done;
+    await expectFlushed(done);
     expect(fake.stdout).toEqual([]);
     expect(fake.stderr).toEqual(['[TraceProcessor] Process exited', 'released port']);
     expect(codes).toEqual([0]);
