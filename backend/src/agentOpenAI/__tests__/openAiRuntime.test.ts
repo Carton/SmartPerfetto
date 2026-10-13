@@ -4,6 +4,7 @@
 
 import {afterEach, beforeEach, describe, expect, it, jest} from '@jest/globals';
 import {DEFAULT_RUNTIME_CACHE_LIMIT} from '../../agentRuntime/runtimeCache';
+import scrollLocation from '../../../tests/fixtures/location-verdict/scroll.json';
 import {sessionContextManager} from '../../agent/context/enhancedSessionContext';
 import {expectRuntimeLeftTerminalStateToFinalizer} from '../../../tests/helpers/runtimeDraftTerminalState';
 import fs from 'fs';
@@ -924,12 +925,40 @@ describe('OpenAI bounded output-limit recovery', () => {
   it('declines missing-declaration completion when the full history and prompt exceed the existing input cap', async () => {
     jest.mocked(configModule.loadOpenAIConfig).mockReturnValue({...createOpenAiConfigForTest(), maxHistoryBytes: 1024});
     const body = 'bounded body '.repeat(300).trimEnd();
-    const runtime = createOpenAiRuntimeForTest(); prepareStub(runtime);
+    const {runtime, updates} = createRuntimeWithUpdates(); prepareStub(runtime);
     const run = mockRun(recoverableStream(body, 'completed'));
     const result = await runtime.analyze('query', 'missing-declaration-history-cap', 'trace', {providerId: null});
     expect(run).toHaveBeenCalledTimes(1);
     expect(result.conclusion).toBe(body);
     expect(result.completion).toMatchObject({status: 'completed'});
+    expect(updates.some(update => update.content?.phase === 'candidate_protocol' &&
+      update.content.message?.includes('未能提交有效断言声明'))).toBe(true);
+  });
+
+  it.each([false, true])('keeps scroll claims or explicitly reports rejected completion: valid=%s', async valid => {
+    const body = scrollLocation.body;
+    const {runtime, updates} = createRuntimeWithUpdates(); prepareStub(runtime);
+    const payload = {schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer', conclusions: [],
+      clusters: valid ? [{cluster: 'FrameTimeline'}] : ['FrameTimeline'], evidenceChain: [],
+      uncertainties: [], nextSteps: [], relationProposals: valid ? [] : [{explanation: 'unknown field'}],
+      claims: [{id: 'frame-outcome', text: '153 帧全部 On-time Present。', kind: 'categorical', references: [],
+        semantics: {schemaVersion: 'claim_semantics@1', predicate: 'captured.cell', polarity: 'affirmed',
+          discourse: 'asserted', quantifier: 'one', modality: 'certain', scope: {population: 'cited_rows'}}}]};
+    const run = mockRun().mockResolvedValueOnce(recoverableStream(body, 'completed'))
+      .mockResolvedValueOnce(recoverableStream(JSON.stringify(payload), 'completed'));
+    const result = await runtime.analyze('query', `scroll-repair-${valid}`, 'trace', {providerId: null});
+    expect(run).toHaveBeenCalledTimes(2);
+    const context = finalization.takeFinalizationContext(result)!;
+    finalizationContexts.push(context);
+    const retained = context.getNativeDeclaration(result, new AbortController().signal)!.raw;
+    expect(inspectCandidateProtocol(retained).canonicalBody.trim()).toBe(body.trim());
+    expect(inspectCandidateProtocol(retained).sidecar.contract?.claims?.length ?? 0).toBe(valid ? 1 : 0);
+    const notices = updates.filter(update => update.content?.phase === 'candidate_protocol' &&
+      update.content.message?.includes('未能提交有效断言声明'));
+    expect(notices).toHaveLength(valid ? 0 : 1);
+    expect(result.completion).toMatchObject({status: 'completed'});
+    expect(result.terminationReason).not.toBe('quality_gate_failed');
+    expect(updates.filter(update => update.type === 'degraded')).toEqual([]);
   });
 
   it('retains the completed native candidate when the declaration template cannot render', async () => {

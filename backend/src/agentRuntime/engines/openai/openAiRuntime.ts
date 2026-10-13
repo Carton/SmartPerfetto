@@ -1079,9 +1079,21 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
       const semanticCall = result.completion?.reason !== 'turn_limit' && result.completion?.reason !== 'timeout';
       const finalizationDeadlineAt = runDeadline.finalizationDeadlineAt(Date.now(), deliveryDeadlineAt, {
         useRemainingBudget: reportReviewUsesRemainingBudget({semanticCall, turnIntent: resolvedTurnIntent, result})});
+      const retainedProtocol = inspectCandidateProtocol(result.conclusion);
+      // Report the retained candidate, including rejected repairs and calls
+      // skipped by budget/history admission. Native completion stays separate.
+      const declarationNotice = turnIntent.taskKind !== 'acknowledgement' && retainedProtocol.canonicalBody.trim() &&
+          retainedProtocol.status !== 'valid' ? localize(config.outputLanguage,
+          retainedProtocol.status === 'absent'
+            ? '结论正文已保留，但未能提交有效断言声明；本轮断言未完成独立核验。'
+            : '结论正文已保留，但断言声明未通过完整校验；未通过的条目仍未核验。',
+          retainedProtocol.status === 'absent'
+            ? 'The answer was retained, but no valid claim declaration was submitted; independent claim verification is incomplete.'
+            : 'The answer was retained, but its claim declaration did not fully pass validation; rejected entries remain unchecked.') : undefined;
       this.emitUpdate({type: 'progress', content: {phase: 'candidate_protocol',
-        candidateProtocolDiagnostic: buildCandidateProtocolDiagnostic(inspectCandidateProtocol(result.conclusion), 'runtime_projected',
-          recoveryCandidate && attemptId !== recoveryCandidate.attemptId ? 2 : 1, conclusionProjection.disposition)}, timestamp: Date.now()});
+        candidateProtocolDiagnostic: buildCandidateProtocolDiagnostic(retainedProtocol, 'runtime_projected',
+          recoveryCandidate && attemptId !== recoveryCandidate.attemptId ? 2 : 1, conclusionProjection.disposition),
+        ...(declarationNotice ? {message: declarationNotice} : {})}, timestamp: Date.now()});
       analysisAbortScope.throwIfAborted();
       const closingProvider = provider;
       return await commitAfterProviderClose(() => closingProvider.close().catch(() => undefined), analysisAbortScope, () => {

@@ -2,8 +2,8 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests'],
+  // __tests__ also contains imported helpers; select actual suite filenames.
   testMatch: [
-    '**/__tests__/**/*.ts',
     '**/?(*.)+(spec|test|eval).ts'
   ],
   // Exclude CLI command files that happen to contain "test" in their name

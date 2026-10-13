@@ -134,6 +134,8 @@ export interface FinalSemanticAssessment {
   /** Private capacity receipt only; contains byte counts and a closed failure stage. */
   readonly inputDiagnostic?: FinalSemanticInputDiagnostic;
   readonly consistency: 'consistent' | 'inconsistent' | 'unknown';
+  /** Private parser receipt: reviewed body scope, independent of omission-location validity. */
+  readonly bodyReviewCoverage?: 'complete' | 'incomplete';
   readonly coverage: {
     readonly body: 'complete' | 'incomplete';
     readonly claims: 'complete' | 'incomplete';
@@ -585,6 +587,11 @@ function semanticResponseJsonText(raw: string): string {
 const unknownClaim = (claimId: string): SemanticClaimAssessment =>
   ({claimId, consistency: 'unknown', contentLocations: [], issues: []});
 
+function locatedContradiction(claim: SemanticClaimAssessment): boolean {
+  return claim.consistency === 'inconsistent' && claim.contentLocations.length > 0 && claim.issues.length > 0 &&
+    claim.issues.every(issue => issue.contentLocations.length > 0);
+}
+
 type SemanticLocationFormat = 'offsets_with_text' | 'exact_quote' | 'catalog_or_exact_quote';
 
 /**
@@ -633,7 +640,12 @@ function parseClaimItem(item: Record<string, unknown>, claimId: string, ordinal:
   if (!locationValid) degrade({stage: 'claim', code: 'invalid_location', ordinal});
   if (item.consistency === 'inconsistent') {
     if (!locationValid) return unknownClaim(claimId);
-    if (issues.length) return {claimId, consistency: 'inconsistent', contentLocations: locations!, issues};
+    const judgment: SemanticClaimAssessment = {claimId, consistency: 'inconsistent', contentLocations: locations!, issues};
+    if (locatedContradiction(judgment)) return judgment;
+    if (issues.length) {
+      degrade({stage: 'claim', code: 'invalid_location', ordinal});
+      return unknownClaim(claimId);
+    }
     degrade({stage: 'claim', code: 'invalid_constraint', ordinal});
     return unknownClaim(claimId);
   }
@@ -699,7 +711,7 @@ function parseResponseStrict(
     if (previous) {
       // Two judgments for one claim: a contradiction survives, anything else is unknown.
       degrade({stage: 'claim', code: 'invalid_reference', ordinal});
-      const contradictions = [previous, parsed].filter(claim => claim.consistency === 'inconsistent');
+      const contradictions = [previous, parsed].filter(locatedContradiction);
       const locations = contradictions.flatMap(claim => claim.contentLocations);
       const issues = contradictions.flatMap(claim => claim.issues);
       parsedClaims.set(claimId, contradictions.length ? {claimId, consistency: 'inconsistent',
@@ -796,7 +808,8 @@ function parseResponseStrict(
   return freezeJson({schemaVersion: 'final_semantic_assessment@1', ruleVersion: FINAL_SEMANTIC_RULE_VERSION,
     binding, ...degradation, status: incomplete ? 'coverage_incomplete' : 'checked',
     consistency: omissions.length || claims.some(claim => claim.consistency === 'inconsistent') ? 'inconsistent' :
-      incomplete ? 'unknown' : 'consistent', coverage, claims, omissions, requirements, investigation});
+      incomplete ? 'unknown' : 'consistent', bodyReviewCoverage: value.bodyCoverage.status,
+    coverage, claims, omissions, requirements, investigation});
 }
 
 function parseResponse(

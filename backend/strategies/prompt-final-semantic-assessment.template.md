@@ -240,8 +240,10 @@ Allowed issue codes are `kind_mismatch`, `predicate_mismatch`, `polarity_mismatc
 `discourse_mismatch`, `modality_mismatch`, `quantifier_mismatch`, `scope_mismatch`,
 `numeric_mismatch`, `declaration_not_expressed` and `unclear_semantics`.
 Consistent requires at least one body location and no issue. Inconsistent
-requires an issue. Concrete mismatch issues require locations;
-`declaration_not_expressed` and `unclear_semantics` may have empty locations.
+requires at least one body location and an issue, with nonempty exact body
+locations for every issue. If a declaration is not expressed or its semantics
+are unclear and no exact contradictory body text can be located, return
+`unknown`, not `inconsistent`; those unknown issues may have empty locations.
 
 Every omission has exactly `code: "undeclared_claim"` and a nonempty
 `contentLocations` array. Do not attach new claim IDs or rewritten claims.

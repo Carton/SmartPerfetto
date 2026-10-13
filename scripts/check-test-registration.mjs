@@ -41,8 +41,7 @@ const SUITE_NAME = /(\.test|\.spec|\.eval|_unittest)\.ts$/;
 /**
  * Every backend suite Jest could be pointed at, under `src/` and `tests/`;
  * both roots must exist. Non-suite `.ts` files under `__tests__/` (fixtures a
- * suite imports) match Jest's testMatch but are not suites: pointing Jest at
- * one fails with "must contain at least one test", so they are not listed.
+ * suite imports) are excluded by Jest's filename matcher and are not listed.
  */
 export function listTestFiles(backendDir = BACKEND) {
   const files = [];

@@ -562,6 +562,19 @@ and corresponding relation proposals, while reducing invalid items. A repair may
 remain `partially_valid`; unresolved entries stay visible rather than disappearing
 or changing the body to obtain a pass.
 
+A semantic location defect keeps only that judgment unknown. Other claims may
+still be verified when their current candidate binding, complete body review,
+finite proof, proposition coverage and located agreement are intact. Whole-answer
+acceptance still requires complete body and declaration coverage. An inconsistent
+judgment needs valid body locations and nonempty locations for every issue;
+unlocated non-expression or unclear semantics stay unknown, including during
+duplicate merging. OpenAI retains the body when declaration completion fails or
+is not admitted by the budget, and explicitly reports incomplete claim verification
+through progress messages without changing native completion or making another call.
+The parser privately separates reviewed body scope from omission coverage: an
+unusable omission location still blocks whole-answer acceptance without revoking
+other claims reviewed over the complete body. Models cannot submit this receipt.
+
 Conclusion presentation retains the complete body rather than removing semantic
 sections by headings such as “Evidence Index” or “Claim Verification”. Web stores
 server verification details separately with the candidate identity; replacing a

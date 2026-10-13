@@ -797,6 +797,36 @@ describe('final semantic response protocol', () => {
     expect(assessment).not.toHaveProperty('reason');
   });
 
+  it.each([[false, false], [false, true], [true, false], [true, true]])(
+    'retains only located duplicate contradictions: %s / %s', async (firstLocated, secondLocated) => {
+      const run = fixture();
+      const judgment = (located: boolean) => ({claimId: 'claim-a', consistency: 'inconsistent',
+        contentLocations: located ? [span(run.input.snapshot.body)] : [],
+        issues: [{code: 'declaration_not_expressed', contentLocations: located ? [span(run.input.snapshot.body)] : []}]});
+      run.reply.claims = [judgment(firstLocated), judgment(secondLocated)] as any;
+      const assessment = await assessFinalSemantics(run.input);
+      expect(assessment.claims[0]).toMatchObject({consistency: firstLocated || secondLocated ? 'inconsistent' : 'unknown'});
+      expect(assessment.claims[0].contentLocations).toEqual(firstLocated || secondLocated
+        ? [{start: 0, end: run.input.snapshot.body.length}] : []);
+    });
+
+  it.each(['declaration_not_expressed', 'unclear_semantics'])('keeps an unlocated %s issue unknown despite a located claim', async code => {
+    const run = fixture();
+    run.reply.claims[0].consistency = 'inconsistent';
+    run.reply.claims[0].issues = [{code, contentLocations: []}];
+    expect(await assessFinalSemantics(run.input)).toMatchObject({status: 'coverage_incomplete',
+      claims: [{consistency: 'unknown'}], notCheckedDetail: 'resp_claim_invalid_location'});
+  });
+
+  it('does not admit a model-authored body review receipt', async () => {
+    const run = fixture();
+    Object.assign(run.reply, {bodyReviewCoverage: 'complete'});
+    const assessment = await assessFinalSemantics(run.input);
+    expect(assessment).toMatchObject({status: 'unavailable', reason: 'invalid_response',
+      responseDiagnostic: {stage: 'envelope', code: 'invalid_shape'}});
+    expect(assessment).not.toHaveProperty('bodyReviewCoverage');
+  });
+
   it.each(['bad_location', 'bad_shape'] as const)('never passes with an unlocatable omission: %s', async kind => {
     const run = fixture();
     run.reply.omissions = kind === 'bad_location'

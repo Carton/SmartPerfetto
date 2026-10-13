@@ -13,6 +13,10 @@ The response must begin with `{` and end with `}` and parse as one whole JSON ob
 
 Serialize JSON compactly: reduce only formatting whitespace outside strings; keep all fields, entries, values, valid IDs and meanings without truncation or omissions. Do not emit comments, placeholder ellipses or unescaped string newlines.
 
+Check collection types against the system declaration schema: entries of `conclusions`, `clusters`, and `evidenceChain` are objects, never shorthand strings (for example, a clusters entry is `{"cluster":"Topic"}`). Unused collections are `[]`. Declare relation proposals only with the appended endpoint schema, without free-text explanation fields; unavailable relation evidence stays unknown, never invent relations to cover the body.
+
+When present, `semantics.numeric` must be an object containing only `operator`, `value`, `unit`, and optional `presentation`; do not add explanation, reference, tolerance or formula fields. Optional `presentation` must also follow every field of the system's `numeric_presentation@1` schema, never a custom rounding or location structure.
+
 Serialization diagnostic (null when inapplicable; optional `offsetUtf16` is a zero-based UTF-16 position from the first JSON payload character, excluding the outer comment and fences, with LF newlines; it locates only the first syntax error, so validate the entire corrected declaration):
 {{serialization_diagnostic}}
 
