@@ -41,8 +41,111 @@ import {investigationRequirementNeedsReview} from '../finalInvestigationContract
 import {createRunManifestLifecycle, withRunManifestLifecycle, clearRunManifestLifecyclesForTests} from '../selfEvolution/runManifestLifecycle';
 import {copyAnalysisResultForSnapshot, projectOwnerAnalysisResult, projectPrivateAnalysisResult} from '../security/privateAnalysisProjection';
 import {buildAnalysisReceipt} from '../analysisReceiptBuilder';
+import locationFault from '../../../tests/fixtures/location-verdict/fault.json';
+import locationNormal from '../../../tests/fixtures/location-verdict/normal.json';
 
 const registry = buildStrategyRegistrySnapshotFromDefinitions({definitions: [], overlayGeneration: 'final-result-test'});
+
+describe('persisted location verdict regressions', () => {
+  async function replay(sample: typeof locationFault | typeof locationNormal, reviews: unknown[],
+    options: {bodyComplete?: boolean; omissions?: unknown[]} = {}) {
+    const declared = parseConclusionContractDeclaration({schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
+      conclusions: [], clusters: [], evidenceChain: [], uncertainties: [], nextSteps: [], claims: sample.claims}).contract!;
+    const result: AnalysisResult = {sessionId: 'location-replay', conclusion: sample.body, conclusionContract: declared,
+      success: true, confidence: 0.8, findings: [], hypotheses: [], rounds: 1, totalDurationMs: 1};
+    const store = new ArtifactStore();
+    // These are newly issued TEST captures of the fixture's original values.
+    // Serialized verifier receipts never become live production capture authority.
+    const groups = new Map<string, NonNullable<ConclusionContract['claims']>>();
+    for (const claim of declared.claims!) {
+      const id = claim.references[0].evidenceRefId!;
+      groups.set(id, [...(groups.get(id) ?? []), claim]);
+    }
+    for (const [evidenceRefId, claims] of groups) {
+      const columns = [...new Set(claims.map(claim => claim.references[0].column!))];
+      const rowCount = Math.max(...claims.map(claim => claim.references[0].rowIndex!)) + 1;
+      const rows = Array.from({length: rowCount}, (_, index) => columns.map(column =>
+        claims.find(claim => claim.references[0].rowIndex === index && claim.references[0].column === column)
+          ?.references[0].value ?? null));
+      const envelope = createDataEnvelope({columns, rows},
+      {type: 'sql_result', source: 'execute_sql', title: 'Replay test capture', evidenceRefId,
+        traceId: 'trace', traceSide: 'current', executionStatus: 'observed'});
+      store.registerStandaloneEvidenceCapture(captureEvidenceTable(envelope.data, Object.fromEntries(claims.map(claim =>
+        [claim.references[0].column!, {
+        ...(claim.semantics?.numeric ? {unit: claim.semantics.numeric.unit} : {}),
+        origin: {kind: 'native_producer', definitionFingerprint: 'location-replay-test'}}]))), {meta: envelope.meta, display: envelope.display});
+    }
+    const runId = 'location-replay';
+    const candidate = {runId, attemptId: 'attempt', candidateRef: 'candidate',
+      conclusionFingerprint: analysisDeliveryFingerprint(result.conclusion)};
+    const dispatch = jest.fn(async (): Promise<IntentTransportResult> => ({status: 'ok', text: JSON.stringify({
+      schemaVersion: 'final_semantic_response@4',
+      bodyCoverage: {status: options.bodyComplete === false ? 'incomplete' : 'complete', reviewedSpans: [{start: 0, end: sample.body.length}]},
+      claims: reviews, omissions: options.omissions ?? [], requirements: [], investigation: [],
+    })}));
+    attachFinalizationContext(result, {runId, sessionId: result.sessionId, deadlineMs: Date.now() + 600_000,
+      strategyRegistry: registry, traceIdentity: {currentTraceId: 'trace'},
+      turnIntent: {schemaVersion: 1, status: 'resolved', source: 'semantic', registryFingerprint: registry.registryFingerprint,
+        taskKind: 'investigation', sceneId: 'general', scope: 'bounded_question', recommendedComplexity: 'quick',
+        deliverable: 'answer', evidenceAccess: 'existing_only'},
+      deliveryContext: {entry: 'runtime_draft', acceptedCandidate: candidate, outputOrigin: 'sdk_final',
+        completion: {...candidate, schemaVersion: 1, runtimeKind: 'openai-agents-sdk', status: 'completed'}},
+      evidenceReadView: store.createEvidenceReadView({allowedTraces: [{traceId: 'trace', traceSide: 'current'}], ownerKey: runId}),
+      dispatchText: dispatch});
+    const context = takeFinalizationContext(result)!;
+    return finalizeAnalysisResult({result, context, query: 'Replay location regression',
+      owner: {runId, signal: new AbortController().signal, isCurrent: () => true, assertAuthorized: () => {}}});
+  }
+
+  it('verifies the located fault claim without promoting its unlocatable neighbor or the whole answer', async () => {
+    const final = await replay(locationFault, [
+      {claimId: 'c_type', consistency: 'consistent', contentLocations: [{text: locationFault.locatedQuote}], issues: []},
+      {claimId: 'n_dur', consistency: 'consistent', contentLocations: [{text: 'not present in immutable body'}], issues: []},
+    ]);
+    expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', passed: false,
+      claimResults: [
+        {claimId: 'c_type', status: 'verified', deterministicProof: {status: 'proved'}, propositionCoverage: {status: 'complete'}},
+        {claimId: 'n_dur', status: 'partial', semanticReview: {consistency: 'unknown'}},
+      ]});
+    expect(final.semanticAssessment).toMatchObject({coverage: {claims: 'incomplete'}, notCheckedDetail: 'resp_claim_invalid_location'});
+    expect(deriveDeliveryVerdict(final.result)).toBe('unverified');
+  });
+
+  it('does not let duplicate empty-location normal contradictions reject proved claims', async () => {
+    const final = await replay(locationNormal, locationNormal.claims.flatMap(claim => Array.from({length: 2}, () => ({
+      claimId: claim.id, consistency: 'inconsistent', contentLocations: [],
+      issues: [{code: 'declaration_not_expressed', contentLocations: []}],
+    }))));
+    expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', unsupportedClaimCount: 0});
+    for (const claim of final.result.claimVerificationResult!.claimResults) {
+      expect(claim).toMatchObject({status: 'partial', deterministicProof: {status: 'proved'},
+        propositionCoverage: {status: 'complete'}, semanticReview: {consistency: 'unknown', contentLocations: []}});
+    }
+  });
+
+  it.each([true, false])('requires complete body review for verified claims and aggregate acceptance: %s', async bodyComplete => {
+    const final = await replay(locationFault, [
+      {claimId: 'c_type', consistency: 'consistent', contentLocations: [{text: locationFault.locatedQuote}], issues: []},
+      {claimId: 'n_dur', consistency: 'consistent', contentLocations: [{text: '2050 ms'}], issues: []},
+    ], {bodyComplete});
+    expect(final.result.claimVerificationResult).toMatchObject({status: bodyComplete ? 'passed' : 'partial', passed: bodyComplete});
+    expect(final.result.claimVerificationResult!.claimResults.map(claim => claim.status))
+      .toEqual(bodyComplete ? ['verified', 'verified'] : ['partial', 'partial']);
+    expect(deriveDeliveryVerdict(final.result)).toBe(bodyComplete ? 'completed' : 'unverified');
+  });
+
+  it('preserves located proved fault claims when an omission location is unusable, without accepting the whole body', async () => {
+    const final = await replay(locationFault, [
+      {claimId: 'c_type', consistency: 'consistent', contentLocations: [{text: locationFault.locatedQuote}], issues: []},
+      {claimId: 'n_dur', consistency: 'consistent', contentLocations: [{text: '2050 ms'}], issues: []},
+    ], {omissions: [{code: 'undeclared_claim', contentLocations: [{text: 'not in the body'}]}]});
+    expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', passed: false});
+    expect(final.result.claimVerificationResult!.claimResults.map(claim => claim.status)).toEqual(['verified', 'verified']);
+    expect(final.semanticAssessment).toMatchObject({coverage: {body: 'incomplete'},
+      notCheckedDetail: 'resp_omission_invalid_location'});
+    expect(deriveDeliveryVerdict(final.result)).toBe('unverified');
+  });
+});
 
 function fixture(options: {body?: string; capture?: boolean; claim?: boolean; inconsistent?: boolean;
   omissions?: boolean; report?: boolean; providerQuery?: {text: string; analysisContextFingerprint?: string};

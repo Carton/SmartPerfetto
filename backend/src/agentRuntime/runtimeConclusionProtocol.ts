@@ -436,8 +436,13 @@ export function buildNativeDeclarationCompletionPrompt(input: {
       ),
     },
   );
-  return input.request.reason === INVALID_NATIVE_DECLARATION
-    ? appendRelationProposalRecoveryFragment(prompt, input.request.diagnostic, input.outputLanguage) : prompt;
+  // Missing declarations need the same endpoint/proof schema on their first
+  // submission; a failed submission has no second repair opportunity.
+  if (input.request.reason === MISSING_NATIVE_DECLARATION) {
+    const relationSchema = renderRequiredLocalizedStrategyTemplate('prompt-relation-proposal-recovery', input.outputLanguage, {});
+    return `${relationSchema}\n\n${prompt}`;
+  }
+  return appendRelationProposalRecoveryFragment(prompt, input.request.diagnostic, input.outputLanguage);
 }
 
 /**

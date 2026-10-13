@@ -13,6 +13,10 @@
 
 JSON 用紧凑序列化，只减少字符串外的格式空白；保留所有字段、条目、值、有效 ID 和含义，不截断、不删减。不要输出注释、占位省略号或未转义的字符串换行。
 
+逐项检查系统声明 schema 中的集合类型：`conclusions`、`clusters`、`evidenceChain` 的条目是对象，不能简写成字符串（例如 clusters 的条目是 `{"cluster":"主题"}`）。未使用的集合为 `[]`。关系提案只按下附端点 schema 声明，不添加自由文本解释字段；没有可用关系证据时保留未知，不编造关系来覆盖正文。
+
+`semantics.numeric` 若存在，必须是对象，只含 `operator`、`value`、`unit` 和可选的 `presentation`；不能添加解释、引用、误差或公式字段。可选 `presentation` 也必须逐字段遵循系统中的 `numeric_presentation@1` schema，不得用自创的舍入或定位结构代替。
+
 序列化诊断（null 表示不适用；`offsetUtf16` 若存在，是从 JSON 正文首字符起、从 0 计数的 UTF-16 位置，不包含外围注释和 fence，换行按 LF 计；它只定位首个语法错误，修正后仍须校验整份声明）：
 {{serialization_diagnostic}}
 

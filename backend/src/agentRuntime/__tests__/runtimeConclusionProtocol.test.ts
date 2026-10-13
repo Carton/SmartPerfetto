@@ -18,6 +18,7 @@ import {
 import {buildCandidateProtocolDiagnostic, inspectCandidateProtocol} from '../../services/canonicalAnalysisResult';
 import failures from '../../../tests/fixtures/pifix/declaration-failure-variants.json';
 import anrExtended from '../../../tests/fixtures/pifix/anr-extended.json';
+import scrollLocation from '../../../tests/fixtures/location-verdict/scroll.json';
 
 const intent = (taskKind: AnalysisTurnIntent['taskKind']): AnalysisTurnIntent => ({
   schemaVersion: 1,
@@ -56,6 +57,40 @@ describe('runtime native declaration completion', () => {
   const rejected = contract([claim('a'), claim('b', {semantics: {...semantics, scope: {population: 'everywhere'}}})]);
   const repair = (candidate: string, repairInvalid = true) => requestNativeDeclarationCompletion({
     intent: intent('investigation'), completion: {status: 'completed'}, candidate, remainingDeliveryTurns: 1, repairInvalid});
+
+  describe('persisted scroll declaration failure', () => {
+    it.each(['en', 'zh-CN'] as const)('supplies first-submission schema in %s and keeps strict acceptance', outputLanguage => {
+      expect(scrollLocation.diagnostics.map(item => [item.candidateIndex, item.status])).toEqual([
+        [1, 'absent'], [2, 'invalid'], [1, 'absent'],
+      ]);
+      expect(scrollLocation.diagnostics[1]).toMatchObject({claimCount: 72, semanticClaimCount: 72,
+        details: [{field: '$.clusters[]', reason: 'wrong_type', expected: 'object', actual: 'string'}]});
+      const request = requestNativeDeclarationCompletion({intent: intent('investigation'), completion: {status: 'completed'},
+        candidate: scrollLocation.body, remainingDeliveryTurns: 1})!;
+      const prompt = buildNativeDeclarationCompletionPrompt({request, intent: intent('investigation'), outputLanguage});
+      expect(prompt).toContain('clusters');
+      expect(prompt).toContain('proofBindings');
+      expect(prompt).toContain('endpointColumn');
+      expect(prompt).toContain('proofColumn');
+      expect(prompt).toContain('semantics.numeric');
+      expect(prompt).toContain('numeric_presentation@1');
+      const payload = recoverNativeDeclarationPayload(contract([claim('a')])) as Record<string, unknown>;
+      // The rejected JSON was not persisted; reconstruct only the observed failure classes.
+      const broken = {...payload, clusters: ['shorthand topic'], relationProposals: [{explanation: 'not a schema field'}]};
+      expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: JSON.stringify(broken)}))
+        .toBeUndefined();
+      const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'}, candidate: JSON.stringify(payload)})!;
+      expect(inspectCandidateProtocol(accepted).canonicalBody.trim()).toBe(scrollLocation.body.trim());
+      expect(inspectCandidateProtocol(accepted).sidecar.contract!.claims).toHaveLength(1);
+      const malformedNumeric = recoverNativeDeclarationPayload(contract([claim('a', {semantics: {...semantics,
+        numeric: {operator: 'eq', value: 9, unit: 'ms', tolerance: 1}}})]));
+      const partial = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+        candidate: JSON.stringify(malformedNumeric)})!;
+      expect(buildCandidateProtocolDiagnostic(inspectCandidateProtocol(partial), 'native', 2))
+        .toMatchObject({status: 'partially_valid', invalidClaimCount: 1,
+          claimDiagnostics: [{field: 'semantics.numeric', subreason: 'shape'}]});
+    });
+  });
 
   it.each(['en', 'zh-CN'] as const)('passes a closed framing location to the existing single repair in %s', outputLanguage => {
     const invalid = contract([claim('a')]).replace('```json', '```JSON');

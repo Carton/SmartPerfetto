@@ -269,9 +269,11 @@ function joinClaimVerification(input: {
   const eligible = input.bindingEligibility !== 'ineligible' && contract?.bindingEligibility !== 'ineligible';
   const bound = Boolean(eligible && semantic && ['checked', 'coverage_incomplete'].includes(semantic.status) &&
     sameAnalysisCandidate(semantic.binding?.canonicalCandidate, candidate, body));
-  const complete = Boolean(bound && semantic &&
-    semantic.coverage.body === 'complete' && semantic.coverage.claims === 'complete' &&
-    sameAnalysisCandidate(semantic.binding?.canonicalCandidate, candidate, body));
+  const bodyReviewed = Boolean(bound && semantic &&
+    (semantic.bodyReviewCoverage ?? semantic.coverage.body) === 'complete');
+  // Omission defects still block whole-answer acceptance even when the parser
+  // confirms the body was reviewed completely and individual claims can pass.
+  const complete = Boolean(bound && semantic?.coverage.body === 'complete' && semantic.coverage.claims === 'complete');
   const issues: ClaimVerificationIssue[] = [...draft.issues];
   const reviewOf = (id: string) => {
     const reviews = semantic?.claims.filter(item => item.claimId === id) ?? [];
@@ -325,7 +327,11 @@ function joinClaimVerification(input: {
       // An unmarked rounding is not verified, but it contradicts nothing.
       return {...prior, status: contradictions.length ? 'unsupported' : 'partial'};
     }
-    if (!complete || review?.consistency !== 'consistent') return {...prior, status: 'partial'};
+    // Coverage of another claim cannot revoke this claim's complete proof and
+    // located review. Whole-answer acceptance still requires complete coverage.
+    if (!bodyReviewed || review?.consistency !== 'consistent' || !review.contentLocations.length) {
+      return {...prior, status: 'partial'};
+    }
     if (presentation && (presentation.status !== 'matched' ||
         !presentation.locations.every(location => review.contentLocations.some(span =>
           location.start >= span.start && location.end <= span.end)))) return {...prior, status: 'partial'};
