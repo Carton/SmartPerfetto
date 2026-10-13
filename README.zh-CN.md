@@ -15,6 +15,12 @@
 SmartPerfetto 在 Perfetto Trace 之上增加 AI 分析层。加载 Trace、用自然语言提问，
 即可获得包含 SQL 结果、Skill 输出、根因推理和优化建议的证据化结论。
 
+**带上你自己的手机／团队知识库。** 把设备专有 tag 定义、Trace 片段说明和版本差异整理成
+文档，在 AI Assistant 的上下文控件 →“管理…”→“文档知识库”添加并建立索引，再按轮选择。
+模型可检索资料解释具体含义，答案附文件与行号，回答下方显示检索交付数和答案引用情况。
+这有助于减少对私有名称的猜测，当前 Trace 的事实仍由 SQL／Skill 证明。命中的正文会发送给
+你授权的 AI 服务。见[私有知识库使用指南](docs/getting-started/private-knowledge.md)。
+
 项目已开源并持续开发。Web UI、CLI、后端 Runtime 和 Skill 系统目前均可使用，
 但公开 API 与内部契约仍可能演进。
 
@@ -55,8 +61,9 @@ SmartPerfetto 在 Perfetto Trace 之上增加 AI 分析层。加载 Trace、用�
   可选索引设置见[源码分析指南](docs/getting-started/code-aware-analysis.md)。相关片段会发送给
   当前配置的 AI 服务，源码检索会增加分析耗时。结果和源码引用可随本地历史、报告保存；
   AI 服务的内容留存取决于该服务的配置与政策。
-- 可按轮选用已注册的文档知识库（如 Android Internals Wiki 或团队文档），按需检索并带出处引用；
+- 可按轮选用自己的设备／团队文档知识库，解释专有 tag 和 Trace 片段，按需检索并带出处引用；
   知识库只作背景，不替代当前 trace 的证据。见
+  [私有知识库](docs/getting-started/private-knowledge.md)与
   [Android Internals 知识](docs/getting-started/android-internals-knowledge.md)。
 - 先交付、后核验：Claude 与 OpenAI runtime 边生成边显示回答草稿；回答完成后可立即阅读，
   满足审核条件和预算时再做一次无工具复核。停止核验会保留回答；完整停止和强制停止有各自语义。

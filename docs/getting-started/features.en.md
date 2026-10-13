@@ -217,8 +217,9 @@ See [Multi-Trace Analysis Result Comparison](multi-trace-result-comparison.en.md
 ## 8. Document Knowledge Bases And The Android Internals Wiki
 
 Any folder of documents (`.md .markdown .mdx .txt .rst .adoc .html .htm`) can be
-registered as a document knowledge base, including the `src/` folder of the
-public Android Internals Wiki. Knowledge bases are selected explicitly per turn;
+registered as a document knowledge base, including your device tag definitions,
+trace passage notes, team documents and the public Android Internals Wiki's
+`src/` folder. Knowledge bases are selected explicitly per turn;
 the model searches them on demand with `search_knowledge` /
 `read_knowledge_section` and cites them as `kb:path#Lstart-Lend`.
 
@@ -235,8 +236,11 @@ Effects:
   SQL/Skill evidence; statements based only on it are labelled.
 - Reports, snapshots, and CLI artifacts record which knowledge references were
   delivered (`knowledge_use@1`) and whether each citation in the answer matches.
+- "Knowledge use" below each Web answer shows retrieved passages and answer
+  citations separately, including an explicit indication when none were cited.
 
-See [Using The Android Internals Wiki As A Knowledge Base](android-internals-knowledge.en.md).
+See [Private Knowledge](private-knowledge.en.md) and
+[Using The Android Internals Wiki As A Knowledge Base](android-internals-knowledge.en.md).
 
 ## 9. Code-Aware Local Source Analysis
 

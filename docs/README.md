@@ -19,6 +19,7 @@
 - [Agent 辅助 GitHub 反馈](getting-started/agent-assisted-feedback.md)
 - [Self-Evolution 使用与验收](getting-started/self-evolution.md)
 - [Code-Aware Analysis](getting-started/code-aware-analysis.md)
+- [私有设备与团队知识库](getting-started/private-knowledge.md)
 - [多 Trace 分析结果对比](getting-started/multi-trace-result-comparison.md)
 - [Critical path 与火焰图](getting-started/critical-path-and-flamegraph.md)
 - [把 Android Internals Wiki 作为知识库使用](getting-started/android-internals-knowledge.md)

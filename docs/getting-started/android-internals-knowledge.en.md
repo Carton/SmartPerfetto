@@ -14,6 +14,9 @@ A knowledge base supplies background, not trace evidence. What happened in this
 trace must still be proven by current-trace evidence such as Skills and SQL; a
 statement based only on the knowledge base is labelled as such.
 
+For device-specific tags, trace passages and team documents, including citation
+display and privacy boundaries, see [Private Knowledge](private-knowledge.en.md).
+
 ## 1. Get The Content
 
 ```bash

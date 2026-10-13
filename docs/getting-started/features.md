@@ -205,7 +205,8 @@ Trace 实时对比用于在同一个 AI 对话中，从当前 workspace 任意�
 ## 8. 文档知识库与 Android Internals Wiki
 
 用户可以把任意文档目录（`.md .markdown .mdx .txt .rst .adoc .html .htm`）注册为文档知识库，
-包括公开的 Android Internals Wiki 的 `src/` 目录。知识库按轮显式选择，模型用
+包括自己的设备 tag 定义、Trace 片段说明、团队文档和公开的 Android Internals Wiki 的
+`src/` 目录。知识库按轮显式选择，模型用
 `search_knowledge` / `read_knowledge_section` 按需检索，并以 `kb:路径#L起-L止` 引用出处。
 
 入口：
@@ -217,8 +218,10 @@ Trace 实时对比用于在同一个 AI 对话中，从当前 workspace 任意�
 
 - 知识库只作为背景，不能代替当前 trace 的 SQL/Skill 证据；只依据知识库的说法会被标明。
 - 报告、快照和 CLI 产物记录交付了哪些知识库引用（`knowledge_use@1`）以及答案中每条引用是否对得上。
+- Web 回答下方的“知识库使用”分别显示检索交付数与答案引用数，未引用也明确显示。
 
-完整说明见 [把 Android Internals Wiki 作为知识库使用](android-internals-knowledge.md)。
+完整说明见[私有知识库](private-knowledge.md)和
+[把 Android Internals Wiki 作为知识库使用](android-internals-knowledge.md)。
 
 ## 9. Code-Aware 本机源码分析
 

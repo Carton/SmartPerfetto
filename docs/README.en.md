@@ -21,6 +21,7 @@ and agent evidence are not maintained as permanent documentation.
 - [Agent-Assisted GitHub Feedback](getting-started/agent-assisted-feedback.en.md)
 - [Self-Evolution Usage And Acceptance](getting-started/self-evolution.en.md)
 - [Code-Aware Analysis](getting-started/code-aware-analysis.en.md)
+- [Private Device And Team Knowledge](getting-started/private-knowledge.en.md)
 - [Multi-Trace Analysis Result Comparison](getting-started/multi-trace-result-comparison.en.md)
 - [Critical Path And Flamegraph](getting-started/critical-path-and-flamegraph.en.md)
 - [Android Internals Knowledge](getting-started/android-internals-knowledge.en.md)

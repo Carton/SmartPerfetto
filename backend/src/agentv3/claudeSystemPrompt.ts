@@ -332,13 +332,12 @@ function buildTypedTurnSystemPromptParts(
   data(4, 'pattern_context', context.patternContext, true);
   data(4, 'negative_pattern_context', context.negativePatternContext, true);
   data(4, 'case_background_context', context.caseBackgroundContext, true);
-  // Knowledge is optional background, so it goes first under budget pressure,
-  // guidance before the list of bases: the tools still describe their use and
-  // search every selected base without an id, while comparison and evidence
-  // context say what the trace holds.
+  // Explicitly selected knowledge must remain discoverable under budget
+  // pressure. Drop optional context and visibly trim history instead of
+  // silently removing the owner's selection or its use/citation boundaries.
   if (knowledge) {
-    data(4, 'knowledge_authorization', knowledge.authorization, true);
-    push(4, 'knowledge_use', knowledge.guidance, true);
+    data(4, 'knowledge_authorization', knowledge.authorization);
+    push(4, 'knowledge_use', knowledge.guidance);
   }
   if (defaultDetail) {
     push(3, 'scene_default_detail', `${JSON.stringify({context: 'scene_default_detail', detailRef: defaultDetail.ref,
@@ -349,8 +348,33 @@ function buildTypedTurnSystemPromptParts(
   const truncatedLabels: string[] = [];
   const tokenCount = () => estimatePromptTokens(joinSegments(segments));
   for (let index = segments.length - 1; index >= 0 && tokenCount() > maxTokens; index -= 1) {
-    if (!segments[index].droppable) continue;
-    droppedLabels.push(segments[index].label);
+    const segment = segments[index];
+    // Compact optional owner metadata before sacrificing trace context. Keep
+    // every selected id, index state and the use/citation guidance intact.
+    if (knowledge && segment.label === 'knowledge_authorization') {
+      let bases = knowledge.authorization.knowledgeBases.map(base => ({...base}));
+      segment.originalCharCount = segment.charCount;
+      segment.originalEstimatedTokens = segment.estimatedTokens;
+      for (const field of ['description', 'displayName'] as const) {
+        if (tokenCount() <= maxTokens) break;
+        bases = bases.map(base => {
+          const copy = {...base};
+          delete copy[field];
+          return copy;
+        });
+        segment.content = JSON.stringify({context: segment.label, data: {
+          knowledgeBases: bases, metadataOmitted: true,
+        }});
+      }
+      segment.charCount = segment.content.length;
+      segment.estimatedTokens = estimatePromptTokens(segment.content);
+      segment.truncated = true;
+      truncatedLabels.push(segment.label);
+    }
+    // Keep trace facts while optional background/history can still release
+    // budget. Default strategy details remain available through their tool.
+    if (!segment.droppable || (knowledge && segment.tier <= 3 && segment.label !== 'scene_default_detail')) continue;
+    droppedLabels.push(segment.label);
     segments.splice(index, 1);
   }
   for (let index = segments.length - 1; index >= 0 && tokenCount() > maxTokens; index -= 1) {
@@ -379,6 +403,11 @@ function buildTypedTurnSystemPromptParts(
     segment.estimatedTokens = estimatePromptTokens(best);
     segment.truncated = true;
     truncatedLabels.push(segment.label);
+  }
+  for (let index = segments.length - 1; index >= 0 && tokenCount() > maxTokens; index -= 1) {
+    if (!segments[index].droppable) continue;
+    droppedLabels.push(segments[index].label);
+    segments.splice(index, 1);
   }
   if (tokenCount() > maxTokens) {
     throw new Error(`[SystemPrompt] Typed turn context exceeds hard budget: ~${tokenCount()} tokens (budget: ${maxTokens})`);

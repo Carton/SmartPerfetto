@@ -129,6 +129,28 @@ describe('DocumentCollectionStore', () => {
     expect(hits.map(hit => hit.relativePath)).toEqual(['titles/binder.md', 'misc/notes.txt']);
   });
 
+  it('keeps an exact private tag ahead of short documents containing only common subwords', () => {
+    const id = generation('2');
+    const exact = convertDocumentCollectionFile('device/tags.md',
+      `# Device trace tags\n${'Background details about rendering. '.repeat(25)}XRenderCompositorWorker waits on the device frame fence.\n`)!;
+    const noisy = Array.from({length: 12}, (_, index) => convertDocumentCollectionFile(`generic/${index}.md`,
+      '# XRender Compositor Worker\nGeneral worker notes.\n')!);
+    const docs = [exact, ...noisy];
+    const writer = store.beginGeneration(SCOPE, SOURCE, id);
+    writer.writeBatch(docs);
+    writer.commit({contentFingerprint: 'f'.repeat(64), documentCount: docs.length,
+      sectionCount: docs.reduce((n, doc) => n + doc.sections.length, 0),
+      chunkCount: docs.reduce((n, doc) => n + doc.sections.reduce((m, section) => m + section.chunks.length, 0), 0)});
+    const hits = store.search(SCOPE, SOURCE, id, 'XRenderCompositorWorker', 5);
+    expect(hits[0]!.relativePath).toBe('device/tags.md');
+    // A clipped excerpt is not proof that the matching term is absent.
+    expect(hits[0]!.snippet).not.toContain('XRenderCompositorWorker');
+    expect(store.readSection(SCOPE, SOURCE, id, hits[0]!.sectionId)!.body).toContain('XRenderCompositorWorker');
+    expect(hits.some(hit => hit.relativePath.startsWith('generic/'))).toBe(true);
+    expect(store.search(SCOPE, SOURCE, id, 'ＸＲｅｎｄｅｒＣｏｍｐｏｓｉｔｏｒＷｏｒｋｅｒ', 1)[0]!.relativePath)
+      .toBe('device/tags.md');
+  });
+
   it('reads the whole section a hit belongs to from the same generation', () => {
     const id = generation('5');
     writeGeneration(id);

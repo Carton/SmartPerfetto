@@ -39,6 +39,7 @@ import {
   knowledgeFtsMatchExpression,
   knowledgeIndexTokenText,
   knowledgeQueryTokens,
+  normalizeKnowledgeQuery,
 } from './knowledgeTokens';
 
 const SCHEMA_VERSION = 1;
@@ -406,6 +407,9 @@ export class DocumentCollectionStore {
   ): DocumentCollectionSearchHit[] {
     const expression = knowledgeFtsMatchExpression(knowledgeQueryTokens(query));
     if (!expression) return [];
+    // A full tag/phrase outranks its common subwords, which remain useful for
+    // recall. Both searches use the same pinned index and unicode61 tokenizer.
+    const exactExpression = knowledgeFtsMatchExpression([normalizeKnowledgeQuery(query).toLowerCase()])!;
     const limit = Math.min(MAX_TOP_K, Math.max(1, Math.trunc(topK)));
     const rows = this.reader(scope, sourceId, generation).prepare(`
       SELECT c.chunk_id, c.section_id, d.relative_path, d.title, s.heading, s.heading_path_json,
@@ -415,9 +419,10 @@ export class DocumentCollectionStore {
       JOIN sections s ON s.section_id = c.section_id
       JOIN documents d ON d.doc_id = c.doc_id
       WHERE chunks_fts MATCH ?
-      ORDER BY rank ASC, c.chunk_id ASC
+      ORDER BY CASE WHEN c.rowid IN (SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?) THEN 0 ELSE 1 END,
+               rank ASC, c.chunk_id ASC
       LIMIT ?
-    `).all(expression, limit) as SearchRow[];
+    `).all(expression, exactExpression, limit) as SearchRow[];
     return rows.map(row => ({chunkId: row.chunk_id, ...locatedFields(row), snippet: row.body.slice(0, SNIPPET_CHARS),
       snippetComplete: row.body.length <= SNIPPET_CHARS}));
   }

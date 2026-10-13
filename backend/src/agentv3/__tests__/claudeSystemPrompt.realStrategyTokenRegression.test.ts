@@ -27,6 +27,7 @@ import path from 'path';
 import {loadSourceUsePrompt} from '../../services/codebase/sourceUseDecision';
 import {buildSceneEvidencePromptData, SCENE_EVIDENCE_MAX_BYTES, SCENE_EVIDENCE_MAX_CELLS} from '../../agentRuntime/sceneEntryEvidence';
 import {resolveFocusAppTarget} from '../../agentRuntime/focusAppTarget';
+import {MAX_KNOWLEDGE_SOURCE_IDS_PER_ANALYSIS} from '../../services/codebase/codeAwareFeature';
 
 describe('typed prompt with real strategy assets', () => {
   it.each(['startup', 'scrolling'] as const)('fits real typed %s comparison reports without trimming evidence obligations', sceneType => {
@@ -47,13 +48,17 @@ describe('typed prompt with real strategy assets', () => {
       truncatedLabels: parts.truncatedLabels}));
   });
 
-  it.each(['startup', 'scrolling'] as const)('fits real typed %s comparison reports with a knowledge base selected', sceneType => {
+  it.each((['startup', 'scrolling'] as const).flatMap(sceneType =>
+    (['zh-CN', 'en'] as const).flatMap(outputLanguage =>
+      [1, MAX_KNOWLEDGE_SOURCE_IDS_PER_ANALYSIS].map(sourceCount => ({sceneType, outputLanguage, sourceCount})))))
+  ('keeps $sourceCount selected bases in real $sceneType $outputLanguage comparison reports', ({sceneType, outputLanguage, sourceCount}) => {
     const context = makeWorstCaseContext(sceneType);
-    // One selected collection with the longest name and description the registry and prompt allow.
+    context.outputLanguage = outputLanguage;
+    // The maximum legal selection, with the longest names/descriptions the prompt allows.
     context.sourceAuthorization = {...(context.sourceAuthorization ?? {codebases: []}), knowledgeAuthorization: {
-      knowledgeBases: [{id: `eks_${'a'.repeat(24)}`, displayName: '团队渲染框架'.repeat(11).slice(0, 64),
+      knowledgeBases: Array.from({length: sourceCount}, (_, index) => ({id: `eks_${index.toString(16).padStart(24, '0')}`, displayName: '团队渲染框架'.repeat(11).slice(0, 64),
         description: '内部渲染框架、trace tag 与已知问题说明。'.repeat(12).slice(0, 120),
-        kind: 'document_collection', activeIndex: true}],
+        kind: 'document_collection' as const, activeIndex: true})),
     }};
     const parts = buildSystemPromptParts(context);
     const plain = buildSystemPromptParts(makeWorstCaseContext(sceneType));
@@ -65,17 +70,28 @@ describe('typed prompt with real strategy assets', () => {
       droppedTokens: plain.segments.filter(segment => parts.droppedLabels.includes(segment.label))
         .map(segment => [segment.label, segment.tier, segment.estimatedTokens])}));
     expect(estimatePromptTokens(parts.fullPrompt)).toBeLessThanOrEqual(MAX_PROMPT_TOKENS);
-    expect(parts.truncatedLabels).toEqual([]);
     for (const label of ['turn_protocol', 'comparison_identity', 'selection_context', 'investigation_requirements',
-      'investigation_findings', 'report_requirements', 'conclusion_declaration', 'sql_discovery_guidance']) {
+      'investigation_findings', 'report_requirements', 'conclusion_declaration', 'sql_discovery_guidance',
+      'trace_context', 'trace_completeness', 'focus_app_guidance']) {
       expect(parts.segments.some(segment => segment.label === label)).toBe(true);
     }
-    // This worst case leaves the plain prompt about 15 tokens of slack, less
-    // than any knowledge segment. Knowledge goes first, guidance then the list
-    // of bases, so comparison and evidence context survive; the tools still
-    // search every selected base without an id. A change that evicts anything
-    // more fails here.
-    expect(parts.droppedLabels).toEqual(['scene_default_detail', 'knowledge_use', 'knowledge_authorization']);
+    expect(parts.droppedLabels).not.toContain('knowledge_use');
+    expect(parts.droppedLabels).not.toContain('knowledge_authorization');
+    for (const label of ['knowledge_authorization', 'knowledge_use']) {
+      expect(parts.segments.find(segment => segment.label === label))
+        .toMatchObject({droppable: false, truncatable: false});
+    }
+    const selected = JSON.parse(parts.segments.find(segment => segment.label === 'knowledge_authorization')!.content);
+    expect(selected.data.knowledgeBases.map(({id, kind, activeIndex}: {id: string; kind: string; activeIndex: boolean}) => ({id, kind, activeIndex})))
+      .toEqual(context.sourceAuthorization.knowledgeAuthorization!.knowledgeBases.map(({id, kind, activeIndex}) => ({id, kind, activeIndex})));
+    for (const label of parts.truncatedLabels) {
+      if (label === 'knowledge_authorization') {
+        expect(selected.data.metadataOmitted).toBe(true);
+      } else {
+        expect(['conversation_context', 'runtime_evidence']).toContain(label);
+        expect(parts.segments.find(segment => segment.label === label)?.content).toContain('"truncated":true');
+      }
+    }
   });
 
   it.each(['startup', 'scrolling'] as const)('fits a %s scene-wide investigation report with bound-sized scene evidence', sceneType => {

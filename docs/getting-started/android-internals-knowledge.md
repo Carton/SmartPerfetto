@@ -11,6 +11,9 @@ Android 系统机制与性能分析资料。SmartPerfetto 不再内置它，也�
 知识库只提供背景，不是 Trace 证据：本次 trace 里发生了什么，仍要由 Skill、SQL
 等当前 trace 证据证明；只依据知识库的说法会标明“依据内部资料”。
 
+设备专有 tag、Trace 片段和团队内部文档的准备、引用展示与隐私边界，见
+[私有知识库使用指南](private-knowledge.md)。
+
 ## 1. 获取内容
 
 ```bash

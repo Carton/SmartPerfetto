@@ -16,6 +16,15 @@ SmartPerfetto adds an AI analysis layer to Perfetto traces. Load a trace, ask a
 natural-language question, and get an evidence-backed answer with SQL results,
 Skill outputs, root-cause reasoning, and optimization suggestions.
 
+**Bring your own device or team knowledge.** Add documents describing private
+trace tags, trace passages and version differences from the AI Assistant context
+control → "Manage…" → "Document knowledge bases", index them, then select them
+per turn. The model can look up definitions and cite files and lines; below each
+answer you can see retrieved passages and answer citations separately. This helps
+reduce guesses about private names while SQL/Skills establish current-trace facts.
+Matching text is sent to the AI service you authorize. See the
+[Private Knowledge guide](docs/getting-started/private-knowledge.en.md).
+
 The project is open source and in active development. The Web UI, CLI, backend
 runtime, and Skill system are usable today, while public APIs and internal
 contracts may still evolve.
@@ -65,10 +74,11 @@ Register the public Android Internals Wiki (or your own team documents) as a doc
   for excluded paths and optional indexing. Relevant snippets are sent to the configured
   AI service; source lookup adds analysis time. Results and quoted source can be
   retained in local history and exports; AI-service retention depends on its policy.
-- Optionally selects registered document knowledge bases per turn (such as the
-  Android Internals Wiki or team documents), searched on demand and cited; a
+- Optionally selects your device or team document knowledge bases per turn to
+  explain private tags and trace passages, searched on demand and cited; a
   knowledge base is background, never a substitute for current-trace evidence.
-  See [Android Internals Knowledge](docs/getting-started/android-internals-knowledge.en.md).
+  See [Private Knowledge](docs/getting-started/private-knowledge.en.md) and
+  [Android Internals Knowledge](docs/getting-started/android-internals-knowledge.en.md).
 - Delivers first, verifies after: the Claude and OpenAI runtimes stream the
   answer as a draft while it is written. A finished answer remains readable
   while an eligible, budgeted no-tool review checks it. Stopping that review
