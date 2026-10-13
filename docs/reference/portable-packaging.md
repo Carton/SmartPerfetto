@@ -52,38 +52,54 @@ dist/windows-exe/smartperfetto-v<version>-windows-x64.zip
 
 ## 发布
 
-完整公开发布顺序见 [发布手册](release.md)。免安装包发布通常在 npm CLI
-发布和 smoke 通过后执行。
+完整公开发布顺序见 [发布手册](release.md)。先上传免安装包 draft，通过三平台
+精确归档 smoke 后公开 GitHub release；公开事件再触发 npm Trusted Publishing。
 
 正常公开发布中的 portable 步骤：
 
 ```bash
 npm run version:set -- <version>
 npm run version:sync -- --check
-git add package.json package-lock.json backend/package.json backend/package-lock.json
+npm --prefix backend run cli:pack-check
+npm --prefix backend run cli:e2e
+git add package.json package-lock.json backend/package.json backend/package-lock.json CHANGELOG.md
 git commit -m "chore: release v<version>"
 git push origin main
-npm --prefix backend run cli:pack-check
-cd backend
-npm publish --access public
-cd ..
+git tag -a v<version> -F <release-notes-file>
+git push origin v<version>
+# 公开 macOS 包须先配置下文的 Developer ID 和 Keychain 公证 profile
 npm run package:portable
-# 以下命令分别在归档匹配的 Windows x64、macOS arm64、Linux x64 上运行
-node scripts/smoke-portable-archive.cjs --asset <final-archive> --target <target> \
-  --version <version> --commit <commit> --public-release \
-  --output-dir dist/portable/smoke-evidence/<target>
-# 没有目标机器时，从默认分支对现有 draft 运行：
+npm run release:portable -- <version> --skip-build
+# 本示例使用 hosted smoke，从默认分支对刚上传的 draft 运行：
 gh workflow run portable-exact-archive-smoke.yml \
-  -f release_id=<numeric-release-id> -f selection=all
-gh run download <run-id> \
+  --ref main -f release_id=<numeric-release-id> -f selection=all
+gh run list --workflow portable-exact-archive-smoke.yml --limit 5
+gh run watch <smoke-run-id> --exit-status
+gh run download <smoke-run-id> \
   --name portable-smoke-evidence-release-<numeric-release-id> \
   --dir <download-dir>
 npm run release:portable -- <version> --skip-build --no-draft \
   --release-commit <draft-target-full-sha> \
   --smoke-evidence-dir <download-dir>/promotion-evidence \
   --smoke-attestation <download-dir>/portable-smoke-attestation.json \
-  --smoke-run-id <run-id>
+  --smoke-run-id <smoke-run-id>
+gh run list --workflow npm-publish.yml --limit 5
+gh run watch <npm-run-id> --exit-status
+npm view @gracker/smartperfetto@<version> version dist.integrity --json
 ```
+
+如果使用本地原生 smoke 替代 hosted workflow，在每个匹配的 Windows x64、
+macOS arm64、Linux x64 上测试同一份最终归档：
+
+```bash
+node scripts/smoke-portable-archive.cjs --asset <final-archive> --target <target> \
+  --version <version> --commit <commit> --public-release \
+  --output-dir dist/portable/smoke-evidence/<target>
+```
+
+以上 promotion 示例使用 hosted smoke 的完整证据。本地原生 smoke 的证据入口与
+npm OIDC 恢复步骤见发布手册。普通发布不需要本地 `npm publish`；交互式发布仅是
+发布手册中明确限定的应急回退。
 
 `package:portable` 会从 `scripts/node-runtime-pin.env` 读取明确的 Node.js
 版本、三平台归档 SHA-256 和可执行内容摘要，而不是在构建时动态选择最新版本。

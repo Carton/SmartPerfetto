@@ -54,37 +54,55 @@ dist/windows-exe/smartperfetto-v<version>-windows-x64.zip
 ## Release
 
 See the [Release Runbook](release.en.md) for the full public release sequence.
-Portable publishing normally happens after the npm CLI is published and smoked.
+Upload the portable draft first, smoke its exact archives on all three platforms,
+then publish the GitHub release. That public event triggers npm Trusted Publishing.
 
 Portable steps in a normal public release:
 
 ```bash
 npm run version:set -- <version>
 npm run version:sync -- --check
-git add package.json package-lock.json backend/package.json backend/package-lock.json
+npm --prefix backend run cli:pack-check
+npm --prefix backend run cli:e2e
+git add package.json package-lock.json backend/package.json backend/package-lock.json CHANGELOG.md
 git commit -m "chore: release v<version>"
 git push origin main
-npm --prefix backend run cli:pack-check
-cd backend
-npm publish --access public
-cd ..
+git tag -a v<version> -F <release-notes-file>
+git push origin v<version>
+# Configure the Developer ID and Keychain notarization profile below before a public macOS build.
 npm run package:portable
-# Run this command once on each matching Windows x64, macOS arm64, and Linux x64 target.
-node scripts/smoke-portable-archive.cjs --asset <final-archive> --target <target> \
-  --version <version> --commit <commit> --public-release \
-  --output-dir dist/portable/smoke-evidence/<target>
-# When a target machine is unavailable, run against the existing draft from the default branch:
+npm run release:portable -- <version> --skip-build
+# This example uses hosted smoke against the uploaded draft from the default branch:
 gh workflow run portable-exact-archive-smoke.yml \
-  -f release_id=<numeric-release-id> -f selection=all
-gh run download <run-id> \
+  --ref main -f release_id=<numeric-release-id> -f selection=all
+gh run list --workflow portable-exact-archive-smoke.yml --limit 5
+gh run watch <smoke-run-id> --exit-status
+gh run download <smoke-run-id> \
   --name portable-smoke-evidence-release-<numeric-release-id> \
   --dir <download-dir>
 npm run release:portable -- <version> --skip-build --no-draft \
   --release-commit <draft-target-full-sha> \
   --smoke-evidence-dir <download-dir>/promotion-evidence \
   --smoke-attestation <download-dir>/portable-smoke-attestation.json \
-  --smoke-run-id <run-id>
+  --smoke-run-id <smoke-run-id>
+gh run list --workflow npm-publish.yml --limit 5
+gh run watch <npm-run-id> --exit-status
+npm view @gracker/smartperfetto@<version> version dist.integrity --json
 ```
+
+To use local-native smoke instead of the hosted workflow, test the same final
+archives on each matching Windows x64, macOS arm64, and Linux x64 machine:
+
+```bash
+node scripts/smoke-portable-archive.cjs --asset <final-archive> --target <target> \
+  --version <version> --commit <commit> --public-release \
+  --output-dir dist/portable/smoke-evidence/<target>
+```
+
+This promotion example uses the complete hosted smoke evidence. See the runbook
+for local-native evidence and npm OIDC recovery. Normal releases do not require
+local `npm publish`; interactive publishing is limited to the runbook's explicit
+emergency fallback.
 
 `package:portable` reads the exact Node.js version, target archive SHA-256
 values, and executable-content digests from `scripts/node-runtime-pin.env`

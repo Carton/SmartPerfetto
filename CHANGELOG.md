@@ -13,6 +13,27 @@ Detailed commit-level history is available via `git log`.
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-10-14
+
+### Fixed
+
+- Malformed claim and investigation locations no longer discard healthy items from the entire semantic review. Invalid root envelopes remain rejected, and incomplete evidence remains explicitly unverified.
+- Scrolling identity recovery accepts an evidence-selected UPID and retains the original time window. Ambiguous identity limits the affected attribution while independent findings and report text remain deliverable.
+- Completed-answer declaration recovery uses the existing delivery reserve instead of an exhausted investigation deadline. Recovery remains bounded, preserves the original answer on failure, and revalidates declarations that could be swallowed by an unclosed comment or fence.
+- Registered report scenes without section requirements receive an authoritative empty requirement set, avoiding an invalid snapshot before review.
+- Current authorized evidence reads retain conservative handling of duplicate anchors, empty tables and exact captured-value rounding without inventing process identity, units or verified proof.
+- Private document retrieval prioritizes complete tag and phrase matches, retains selected knowledge and citation guidance under prompt pressure, and distinguishes delivered passages from citations in Web answers.
+
+### Changed
+
+- Internal performance receipts record canonical declaration state and repair acceptance independently of provider-call completion.
+- The portable packaging guide follows draft upload, exact three-platform smoke, promotion and npm Trusted Publishing in the same order as the release runbook.
+
+### Verification limits
+
+- Real-model startup, scrolling and Binder runs reached the targeted report-recovery checks; full strict claim verification remains incomplete where references, units, content or investigation coverage are insufficient. Delivered reports retain these limitations and actual rejected claims.
+- The corresponding public Perfetto-Skills projection remains deferred; this release does not claim that independent repository has been synchronized.
+
 ## [1.16.1] - 2026-10-12
 
 ### Fixed
