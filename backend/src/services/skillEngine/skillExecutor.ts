@@ -50,6 +50,7 @@ import {attachEvidenceTable, captureEvidenceTable, capturedEvidenceTable, eviden
   type CapturedFieldSemantics} from '../evidence/evidenceCapture';
 import { scopeMetadata, mergeScopeProvenance, identityForScopeEvidence, scopeProvenanceForFields, type EvidenceScopeMetadata, type EvidenceScopeProvenanceV1 } from '../../types/identityContract';
 import logger from '../../utils/logger';
+import {localize, parseOutputLanguage} from '../../agentv3/outputLanguage';
 import { getPipelineDocService } from '../pipelineDocService';
 import {
   ensurePipelineSkillsInitialized,
@@ -1453,6 +1454,7 @@ export class SkillExecutor {
     gate: IdentityGateResult,
   ): SkillExecutionResult {
     const error = gate.error || `Process identity gate blocked skill: ${skillId}`;
+    const language = parseOutputLanguage(gate.inherited.__outputLanguage ?? process.env.SMARTPERFETTO_OUTPUT_LANGUAGE);
     const identityResolution = buildIdentityResolutionFromProcessGate({
       traceId,
       traceSide,
@@ -1487,8 +1489,12 @@ export class SkillExecutor {
           policy: gate.config.policy,
         },
         suggestions: [
-          '先确认目标应用身份；如果候选进程不唯一，请使用用户明确包名、线程名或 UPID 重新运行。',
-          '报告中使用 canonicalPackageName，旧 Skill 参数使用 recommendedProcessNameParam。',
+          localize(language,
+            '核对候选与 warnings；缺少身份依据时运行 process_identity_resolver。仅在证据能区分目标进程后，携带该行的正整数 upid 和原时间范围重试；排名或同名不代表确认。',
+            'Inspect candidates and warnings; use process_identity_resolver for missing identity evidence. Retry with the selected row\'s positive upid and original time range only when evidence distinguishes the target; rank or a repeated name is not confirmation.'),
+          localize(language,
+            '显式 UPID 仍须通过门禁。身份未确认时保留限制并交付其余有效证据；删除过滤或 SQL 成功不能验证目标身份，也不能声称未执行的 Skill 已产出指标。',
+            'An explicit UPID must still pass the gate. Retain identity limitations and deliver other valid evidence; dropping filters or successful SQL does not verify the target or mean an unrun Skill produced measurements.'),
         ],
         source: 'rule',
       }],

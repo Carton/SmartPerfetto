@@ -461,17 +461,18 @@ function buildOpenAIModelSettings(
 }
 
 /**
- * Provider controls of a declaration repair, which runs on the main client:
- * the same purpose mapping as the no-tool transports, merged into the request
- * body through `providerData`. Other recoveries keep the run's own settings.
+ * Provider controls for declaration-only repair and timeout closeout on the
+ * main client, using the same purpose mapping as the no-tool transports.
+ * Ordinary answer/continuation calls keep the run's own settings.
  */
-function declarationRepairProviderData(
+function outputOnlyProviderData(
   config: Pick<OpenAIAgentConfig, 'baseURL' | 'protocol'>,
+  purpose: 'declaration_repair' | 'continuation',
 ): Record<string, unknown> | undefined {
   if (!config.baseURL) return undefined;
   try {
     const options = buildOpenAITextRequestPurposeOptions({requestUrl: new URL(config.baseURL),
-      protocol: config.protocol, purpose: openAiTextRequestPurposeFor('declaration_repair')});
+      protocol: config.protocol, purpose: openAiTextRequestPurposeFor(purpose)});
     return Object.keys(options).length > 0 ? options : undefined;
   } catch { return undefined; }
 }
@@ -546,7 +547,7 @@ export const __testing = {
   compactProviderErrorMessage,
   commitAfterProviderClose,
   buildOpenAIModelSettings,
-  declarationRepairProviderData,
+  outputOnlyProviderData,
   createOpenAiTerminalFetch,
   resolveOpenAiNativeCompletion,
   finalizeOpenAiCandidate,
@@ -749,6 +750,10 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
         maxRunMs: config.maxRunTimeoutMs});
       // Set only for the single no-tool delivery call admitted after a timeout.
       let deliveryDeadlineAt: number | undefined;
+      // A completed answer's one protocol repair uses the existing delivery
+      // reserve. Keep it separate from exhausted-budget closeout: its original
+      // completion remains eligible for the normal finalization policy.
+      let completedOutputDeliveryDeadlineAt: number | undefined;
       // Internal diagnostics: which timeout-delivery branch this run took.
       let timeoutDelivery: 'not_needed' | 'attempted' | 'no_returned_data' | 'turn_budget_exhausted' |
         'delivery_window_too_short' | 'template_unavailable' | 'recovery_in_progress' = 'not_needed';
@@ -776,7 +781,7 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
         // A continuation or retry replaces what the previous attempt streamed.
         answerDraft.reset();
         const recoveringOutputLimit = Boolean(recoveryCandidate);
-        // Acquisition and delivery share one absolute deadline and total budget.
+        // Acquisition and delivery share one absolute hard deadline and total budget.
         const remainingTurns = Math.max(1, maxTurns - rounds);
         const reserveDeliveryTurn = !recoveringOutputLimit && turnBudget.deliveryTurns === 1 && remainingTurns > 1;
         const attemptMaxTurns = recoveringOutputLimit ? 1 : remainingTurns - (reserveDeliveryTurn ? 1 : 0);
@@ -812,7 +817,7 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
           ? SILENT_ANSWER_DRAFT : createProjectedAnswerDraft(answerDraft, answerTextProjection);
         const toolInputsByTaskId = new Map<string, {toolName: string; args: Record<string, unknown>}>();
         const processedToolResultIds = new Set<string>();
-        const attemptDeliveryDeadlineAt = deliveryDeadlineAt;
+        const attemptDeliveryDeadlineAt = deliveryDeadlineAt ?? completedOutputDeliveryDeadlineAt;
         const requestTimeout = createDeadlineRuntimeTimeout({
           deadlineAt: () => attemptDeliveryDeadlineAt ?? runDeadline.current(),
           ...(attemptDeliveryDeadlineAt === undefined ? {tryExtend: (now: number) => runDeadline.extendIfStreaming(now)} : {}),
@@ -916,6 +921,10 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
             repairInvalid: true,
           });
           const declarationRepairRejected = recoveryCandidate?.declarationRequest && !repairedDeclarationCandidate;
+          const completedOutputRepair = finish.status === 'completed' && !bodyEmpty &&
+            (Boolean(declarationRequest) || protocolInvalid);
+          const recoveryDeadlineAt = completedOutputRepair
+            ? runDeadline.completedOutputRepairDeadlineAt() : runDeadline.current();
           const exhaustedBudget = recoveryCandidate?.finish.reason === 'turn_limit' || recoveryCandidate?.finish.reason === 'timeout'
             ? recoveryCandidate.finish.reason : undefined;
           if (recoveringOutputLimit && (finish.status !== 'completed' || bodyEmpty || declarationRepairRejected ||
@@ -937,7 +946,7 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
                 'The investigation time budget was exhausted; this limited conclusion uses only returned evidence, and unfinished questions still need investigation.');
           } else if (!recoveringOutputLimit && (finish.status === 'incomplete' && finish.reason === 'output_limit' ||
               finish.status === 'completed' && (bodyEmpty || protocolInvalid || declarationRequest)) &&
-              streamCompleted && rounds < maxTurns && Date.now() < runDeadline.current()) {
+              streamCompleted && rounds < maxTurns && Date.now() < recoveryDeadlineAt) {
             // A declaration-only request wins over a full-answer continuation; framing
             // failures (no request) keep the continuation.
             const recoveryReason = finish.reason === 'output_limit' ? 'output_limit' : declarationRequest
@@ -949,11 +958,12 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
               providerOrigin: config.baseURL, model: selectedModel,
               purpose: declarationRequest && recoveryReason === declarationRequest.reason ? 'declaration_repair' : 'continuation',
               inputBytes: serializedByteLength(recoveryInput) + Buffer.byteLength(context.systemPrompt),
-              remainingMs: runDeadline.current() - Date.now(),
+              remainingMs: recoveryDeadlineAt - Date.now(),
               failOpen: deliveryCallFailsOpen(turnIntent, {bodyMissing: recoveryReason === 'empty_body'})})) {
               acceptsToolUpdates = false;
               const repairsDeclaration = recoveryReason === MISSING_NATIVE_DECLARATION || recoveryReason === INVALID_NATIVE_DECLARATION;
-              const repairProviderData = repairsDeclaration ? declarationRepairProviderData(config) : undefined;
+              if (completedOutputRepair) completedOutputDeliveryDeadlineAt = recoveryDeadlineAt;
+              const repairProviderData = repairsDeclaration ? outputOnlyProviderData(config, 'declaration_repair') : undefined;
               attemptCall = {purpose: repairsDeclaration ? 'declaration_repair' : 'continuation', trigger: recoveryReason,
                 ...(repairProviderData ? {reasoning: 'thinking' in repairProviderData || 'reasoning' in repairProviderData
                   ? 'disabled' : 'provider_default'} : {})};
@@ -1019,11 +1029,17 @@ export class OpenAIRuntime extends EventEmitter implements IOrchestrator {
             if (!boundedPrompt) timeoutDelivery = 'template_unavailable';
             if (boundedPrompt) {
               acceptsToolUpdates = false;
-              attemptCall = {purpose: 'continuation', trigger: 'timeout'};
+              // The exhausted investigation cannot restart: this call only
+              // renders already-returned evidence within the fixed reserve.
+              const closeoutProviderData = outputOnlyProviderData(config, 'continuation');
+              attemptCall = {purpose: 'continuation', trigger: 'timeout',
+                ...(closeoutProviderData ? {reasoning: 'thinking' in closeoutProviderData || 'reasoning' in closeoutProviderData
+                  ? 'disabled' : 'provider_default'} : {})};
               recoveryCandidate = {conclusion, attemptId, outputOrigin, finish, terminationMessage,
                 hadDeclarations: inspectCandidateProtocol(conclusion).status !== 'absent'};
               deliveryDeadlineAt = Date.now() + deliveryWindowMs;
-              agent = agent.clone({tools: [], modelSettings: {...agent.modelSettings, toolChoice: 'none'}});
+              agent = agent.clone({tools: [], modelSettings: {...agent.modelSettings, toolChoice: 'none',
+                ...(closeoutProviderData ? {providerData: {...agent.modelSettings.providerData, ...closeoutProviderData}} : {})}});
               runInput = [{role: 'user' as const, content: boundedPrompt}];
               continue;
             }

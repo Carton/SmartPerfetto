@@ -18,6 +18,8 @@ import {analysisDeliveryFingerprint} from '../types/analysisDelivery';
 import type {AnalysisCompletion} from '../types/analysisDelivery';
 import type {AnalysisTurnIntent} from './analysisTurnIntent';
 import type {VerificationIssue} from '../agentv3/types';
+import {currentRuntimePerformanceRecorder} from '../services/selfEvolution/runManifestLifecycle';
+import {recordRuntimeDeclarationRepair} from './runtimePerformance';
 
 export const MISSING_NATIVE_DECLARATION = 'missing_declaration' as const;
 export const INVALID_NATIVE_DECLARATION = 'invalid_declaration' as const;
@@ -474,9 +476,16 @@ export function acceptNativeDeclarationCompletion(input: {
   // only, never model text (rooted_lock_monitor delivered its undeclared first
   // candidate after a valid 14-claim completion with no trace of why).
   const reject = (reason: string, facts: Record<string, string | number | boolean> = {}): undefined => {
+    if (reason !== 'completion_not_completed') {
+      recordRuntimeDeclarationRepair(currentRuntimePerformanceRecorder(), 'rejected');
+    }
     console.log(`[DeclarationRepair] completion rejected: request=${input.request.reason} reason=${reason}` +
       Object.entries(facts).map(([key, value]) => ` ${key}=${value}`).join(''));
     return undefined;
+  };
+  const accept = (text: string): string => {
+    recordRuntimeDeclarationRepair(currentRuntimePerformanceRecorder(), 'accepted');
+    return text;
   };
   if (input.completion.status !== 'completed') return reject('completion_not_completed', {
     completion: input.completion.status,
@@ -522,13 +531,26 @@ export function acceptNativeDeclarationCompletion(input: {
   const originalBody = original.canonicalBody.trim();
   const completionProse = repaired.canonicalBody.trim();
   // A completion that echoed the body unchanged is already the candidate.
-  if (completionProse === originalBody) return candidate;
+  if (completionProse === originalBody) return accept(candidate);
   if (completionProse) {
     console.log(`[DeclarationRepair] completion prose discarded: request=${input.request.reason} ` +
       `proseChars=${completionProse.length} originalChars=${originalBody.length}`);
   }
-  const joined = `${originalBody}\n\n${candidate.slice(segment.start, segment.end)}`;
-  return nativeDeclarationCandidateFitsOutput(joined, input.outputByteLimit) ? joined : reject('output_limit');
+  const frame = candidate.slice(segment.start, segment.end);
+  const joined = `${originalBody}\n\n${frame}`;
+  if (!nativeDeclarationCandidateFitsOutput(joined, input.outputByteLimit)) return reject('output_limit');
+  const preservesDeclaration = (text: string): boolean => {
+    const inspected = inspectCandidateProtocol(text);
+    return inspected.canonicalBody.trim() === originalBody && inspected.status === repaired.status &&
+      inspected.sidecar.machineSegments.length === 1 &&
+      analysisDeliveryFingerprint(inspected.sidecar.rawPayload) === analysisDeliveryFingerprint(repaired.sidecar.rawPayload);
+  };
+  if (preservesDeclaration(joined)) return accept(joined);
+  // An unclosed comment or fence in the original body can swallow an appended
+  // frame. Put the already validated declaration first without editing that
+  // body or interpreting any of its unrecognized JSON as a declaration.
+  const prefixed = `${frame}\n\n${originalBody}`;
+  return preservesDeclaration(prefixed) ? accept(prefixed) : reject('joined_declaration_not_valid');
 }
 
 /** The per-item acceptance matrix for a repair of an already-declared sidecar. */

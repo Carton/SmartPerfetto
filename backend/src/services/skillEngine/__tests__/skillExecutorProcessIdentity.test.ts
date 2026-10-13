@@ -200,7 +200,7 @@ describe('SkillExecutor process identity gate', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks required process skills when resolver returns only weak identity evidence', async () => {
+  it.each(['zh-CN', 'en'] as const)('blocks weak identity evidence with scoped recovery guidance in %s', async language => {
     const query = jest.fn().mockResolvedValueOnce({
       columns: ['rank', 'confidence_score', 'identity_status', 'canonical_package_name', 'recommended_process_name_param', 'upid', 'target_match_sources', 'supporting_sources', 'identity_warning'],
       rows: [[1, 20, 'weak_match', 'com.example', 'com.uncertain', 42, 'thread.name', '', 'shared UID']],
@@ -209,10 +209,15 @@ describe('SkillExecutor process identity gate', () => {
 
     const result = await createExecutor(query).execute('target_process_skill', 'trace', {
       process_name: 'com.example',
-    });
+    }, {__outputLanguage: language});
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('could not be verified');
+    const suggestions = result.diagnostics[0].suggestions!.join(' ');
+    expect(suggestions).toContain('process_identity_resolver');
+    expect(suggestions).toContain('upid');
+    expect(suggestions).toContain(language === 'en' ? 'original time range' : '原时间范围');
+    expect(suggestions).toContain(language === 'en' ? 'must still pass the gate' : '仍须通过门禁');
     expect(query).toHaveBeenCalledTimes(1);
   });
 
@@ -767,6 +772,34 @@ describe('PID uniqueness with the real process identity resolver YAML', () => {
         expect(result.identityResolution?.status).not.toBe('verified');
         expect(targetQueries).toHaveLength(0);
         expect(query.mock.calls).toHaveLength(1);
+
+        // Names cannot distinguish two instances. Inspect actual resolver rows,
+        // then simulate evidence selecting the non-first instance explicitly.
+        const window = {start_ts: 100, end_ts: 900};
+        const named = await executor.execute('pid_exact_target', 'trace', {package: 'com.example', ...window});
+        expect(named.success).toBe(false);
+        expect(named.identityResolution?.status).toBe('ambiguous');
+        expect(query.mock.calls.filter(([, sql]) => sql.includes('AS selected_upid'))).toHaveLength(0);
+        const inspected = await executor.execute(definition.name, 'trace', {package: 'com.example', ...window});
+        expect(inspected.success).toBe(true);
+        const selected = inspected.rawResults!.root.data.find((row: any) => row.upid === 43)!;
+        expect(selected.rank).toBe(2);
+        query.mockClear();
+        const retried = await executor.execute('pid_exact_target', 'trace', {upid: selected.upid, ...window});
+        expect(retried.success).toBe(true);
+        expect(retried.rawResults?.root.data).toEqual([{selected_upid: 43}]);
+        expect(retried.rawResults?.root.appliedProcessScope).toMatchObject({mode: 'exact_upid', upid: 43});
+        const resolverSql = query.mock.calls.find(([, sql]) => sql.includes('AS raw_start_ts'))![1];
+        expect(resolverSql).toContain('COALESCE(100, trace_start())');
+        expect(resolverSql).toContain('COALESCE(900, trace_end())');
+
+        // An explicit instance does not waive unresolved package ownership.
+        db.exec("INSERT INTO android_process_metadata VALUES (42,'com.example','com.example',1000,1,0)");
+        query.mockClear();
+        const sharedUid = await executor.execute('pid_exact_target', 'trace', {upid: 42, ...window});
+        expect(sharedUid.success).toBe(false);
+        expect(sharedUid.identityResolution?.status).toBe('ambiguous');
+        expect(query.mock.calls.filter(([, sql]) => sql.includes('AS selected_upid'))).toHaveLength(0);
       } else {
         expect(result.rawResults?.root.data).toEqual([{selected_upid: 42}]);
         expect(result.rawResults?.root.appliedProcessScope).toMatchObject({mode: 'exact_upid', upid: 42});

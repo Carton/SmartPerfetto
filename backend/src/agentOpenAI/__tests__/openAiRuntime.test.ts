@@ -639,9 +639,20 @@ describe('OpenAI cancellation and bounded recovery', () => {
       expect(context.deadlineMs).toBeLessThan(startedAt + 3_000);
     });
 
-    it('delivers a limited answer from returned data when the budget runs out', async () => {
-      jest.mocked(configModule.loadOpenAIConfig).mockReturnValue(slowConfig());
+    it.each([
+      ['https://api.deepseek.com/v1', 'responses', {reasoning: {effort: 'none'}}],
+      ['https://gateway.example/v1', 'responses', undefined],
+    ] as const)('delivers returned data after timeout with provider-aware closeout controls: %s %s', async (baseURL, protocol, controls) => {
+      jest.mocked(configModule.loadOpenAIConfig).mockReturnValue({...slowConfig(), baseURL, protocol});
       const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const recorder = createRuntimePerformanceRecorder();
+      const sink = {identity: {runId: 'timeout-run', sessionId: 'timeout-delivery', scope: {tenantId: 't', workspaceId: 'w'}},
+        runtimePerformanceRecorder: recorder, recordScene: jest.fn(), recordRuntime: jest.fn(), recordMode: jest.fn(),
+        recordAdaptiveRouting: jest.fn(), recordCapabilityManifest: jest.fn(), recordSkillRegistry: jest.fn(),
+        startSkillInvocation: jest.fn(() => 'skill-invocation'), finishSkillInvocation: jest.fn(),
+        recordUnknownSkillInvocation: jest.fn(), recordSqlStatement: jest.fn(), recordPromptTemplate: jest.fn(),
+        recordInjection: jest.fn(), recordToolAllowlist: jest.fn(), recordTurn: jest.fn(),
+      } as unknown as RunManifestAttributionSink;
       const runtime = createOpenAiRuntimeForTest(); prepareWithReturnedData(runtime);
       const run = mockRun().mockResolvedValueOnce(streamOf(async function* () {
         yield {type: 'raw_model_stream_event', data: {type: 'response_started'}};
@@ -649,11 +660,23 @@ describe('OpenAI cancellation and bounded recovery', () => {
         await hang();
       }) as any).mockResolvedValueOnce(sdkStream('Main thread waited 195 ms; the owner is not established.'));
       const startedAt = Date.now();
-      const result = await runtime.analyze('query', 'timeout-delivery', 'trace', {analysisMode: 'fast', providerId: null});
+      const result = await runtime.analyze('query', 'timeout-delivery', 'trace',
+        {analysisMode: 'fast', providerId: null, runManifestAttributionSink: sink});
       expect(run).toHaveBeenCalledTimes(2);
       expect((run.mock.calls[1][0] as any).tools).toEqual([]);
       expect(run.mock.calls[1][2]).toMatchObject({maxTurns: 1});
       expect(run.mock.calls[1][2]).not.toHaveProperty('previousResponseId');
+      const mainSettings = (run.mock.calls[0][0] as any).modelSettings;
+      const closeoutSettings = (run.mock.calls[1][0] as any).modelSettings;
+      expect(mainSettings.providerData ?? {}).not.toHaveProperty('thinking');
+      expect(mainSettings.providerData ?? {}).not.toHaveProperty('reasoning');
+      if (controls) expect(closeoutSettings.providerData).toMatchObject(controls);
+      else expect(closeoutSettings.providerData).toEqual(mainSettings.providerData);
+      expect(recorder.seal().modelCalls).toEqual(expect.arrayContaining([
+        expect.objectContaining({purpose: 'answer_turn', reasoning: 'provider_default', outcome: 'cancelled'}),
+        expect.objectContaining({purpose: 'continuation', trigger: 'timeout',
+          reasoning: controls ? 'disabled' : 'provider_default', outcome: 'ok'}),
+      ]));
       const prompt = (run.mock.calls[1][1] as any[])[0].content;
       expect(prompt).toContain('本轮调查已耗尽预算（timeout：');
       expect(prompt).toContain('"rows":[[195]]');
@@ -873,6 +896,78 @@ describe('OpenAI bounded output-limit recovery', () => {
   const protocolSidecar = renderConclusionContractSidecar({schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
     conclusions: [{rank: 1, statement: 'The marker is present.'}], clusters: [], evidenceChain: [],
     claims: [], uncertainties: [], nextSteps: []} as ConclusionContract);
+
+  it.each((['declaration', 'invalid_protocol'] as const).flatMap(repairKind =>
+    (['completed', 'deadline', 'cancelled'] as const).map(outcome => ({repairKind, outcome}))))(
+    'uses only the existing reserve for late $repairKind repair: $outcome', async ({repairKind, outcome}) => {
+      jest.useFakeTimers({now: 0});
+      const body = 'The completed native report remains available.';
+      // anr_extended's unclosed sidecar cannot authorize declaration-only
+      // recovery; it retains the existing full-output invalid_protocol path.
+      const nativeCandidate = repairKind === 'invalid_protocol'
+        ? `${body}\n${protocolSidecar.replace(/-->$/, '')}` : body;
+      const repairDuration = repairKind === 'invalid_protocol' ? 332_508 : 212_918;
+      const sessionId = `late-${repairKind}-${outcome}`;
+      const repairEntered = createDeferred<void>();
+      try {
+        jest.mocked(configModule.loadOpenAIConfig).mockReturnValue({...createOpenAiConfigForTest(),
+          quickPathPerTurnMs: 40_000, quickMaxTurns: 50, maxRunTimeoutMs: 3_600_000,
+          streamIdleTimeoutMs: 600_000});
+        const {runtime, updates} = createRuntimeWithUpdates(); prepareStub(runtime);
+        const run = mockRun().mockResolvedValueOnce({...recoverableStream(nativeCandidate, 'completed'),
+          async *[Symbol.asyncIterator]() {
+            yield {type: 'raw_model_stream_event', data: {type: 'response_started'}};
+            // Replay captured ANR remaining time at the tightest investigation
+            // cap, or low_memory_jank's late dispatch offset, before delivery.
+            jest.setSystemTime(repairKind === 'invalid_protocol' ? 3_000_000 - 22_793 : 2_967_577);
+            yield {type: 'run_item_stream_event', name: 'tool_output', item: {
+              rawItem: {callId: 'last-evidence', name: 'execute_sql', output: '{"success":true}'}}};
+            yield responseDone(nativeCandidate);
+          },
+        }).mockImplementationOnce(async () => {
+          repairEntered.resolve();
+          if (outcome !== 'completed') return new Promise(() => undefined);
+          // Captured fault-r2 success or ANR cancellation duration: either is
+          // beyond investigation time but fits the existing delivery reserve.
+          await new Promise(resolve => setTimeout(resolve, repairDuration));
+          return recoverableStream(repairKind === 'invalid_protocol' ? `${body}\n${protocolSidecar}` : protocolSidecar, 'completed');
+        });
+        const pending = runtime.analyze('query', sessionId, 'trace',
+          {analysisMode: 'fast', providerId: null});
+        const rejected = outcome === 'cancelled' ? expect(pending).rejects.toThrow() : undefined;
+        await repairEntered.promise;
+        expect(run.mock.calls[1][2]).toMatchObject({maxTurns: 1});
+        expect((run.mock.calls[1][0] as any).tools).toEqual([]);
+        const budgetCalls = jest.mocked(runtimeCallStats.admitDeliveryCall).mock.calls;
+        expect(budgetCalls[budgetCalls.length - 1]?.[1])
+          .toMatchObject({purpose: repairKind === 'invalid_protocol' ? 'continuation' : 'declaration_repair', remainingMs: 560_000});
+        if (repairKind === 'invalid_protocol') {
+          const history = run.mock.calls[1][1] as Array<{content?: unknown}>;
+          const prompt = String(history[history.length - 1].content);
+          expect(prompt).toContain('invalid_protocol');
+          expect(prompt).not.toContain('"kind":"rejected_declaration"');
+        }
+        if (outcome === 'cancelled') {
+          runtime.abortSession(sessionId);
+          await rejected;
+          expect(updates.some(update => update.type === 'conclusion')).toBe(false);
+        } else {
+          await jest.advanceTimersByTimeAsync(outcome === 'completed' ? repairDuration : 560_000);
+          const result = await pending;
+          expect(result.completion).toMatchObject({status: 'completed'});
+          expect(inspectCandidateProtocol(result.conclusion).canonicalBody.trim()).toBe(body);
+          expect(inspectCandidateProtocol(result.conclusion).status).toBe(outcome === 'completed' ? 'valid'
+            : repairKind === 'invalid_protocol' ? 'invalid' : 'absent');
+          const context = finalization.takeFinalizationContext(result)!;
+          finalizationContexts.push(context);
+          expect(context.deadlineMs).toBeLessThanOrEqual(3_600_000);
+          expect(context.deadlineMs - Date.now()).toBeGreaterThanOrEqual(40_000);
+        }
+        expect(run).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
 
   it('uses the reserved no-tool turn to complete a full undeclared candidate without rewriting it', async () => {
     const body = `开头🙂\n${'中English🙂'.repeat(1300)}\n结尾`;
@@ -1253,6 +1348,26 @@ describe('OpenAI bounded output-limit recovery', () => {
     expect(result.completion).toMatchObject({status: 'incomplete', reason: 'output_limit'});
   });
 
+  it.each(['output_limit', 'empty_body'] as const)('keeps %s recovery on the investigation deadline', async kind => {
+    const runtime = createOpenAiRuntimeForTest(); prepareStub(runtime);
+    const first = recoverableStream(kind === 'empty_body' ? protocolSidecar : 'Original incomplete answer.',
+      kind === 'empty_body' ? 'completed' : 'incomplete');
+    const start = Date.now();
+    const originalStream = first[Symbol.asyncIterator];
+    first[Symbol.asyncIterator] = async function* () {
+      yield* originalStream();
+      // Default test configuration: investigation 60 s, hard deadline 120 s.
+      // A completed-answer repair could use the reserve here; these cannot.
+      jest.spyOn(Date, 'now').mockReturnValue(start + 90_000);
+    };
+    const run = mockRun(first);
+    const result = await runtime.analyze('query', `no-reserve-${kind}`, 'trace', {providerId: null});
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(inspectCandidateProtocol(result.conclusion).canonicalBody.trim())
+      .toBe(kind === 'empty_body' ? '' : 'Original incomplete answer.');
+    expect(runtimeCallStats.admitDeliveryCall).not.toHaveBeenCalled();
+  });
+
   it('ends the run instead of redispatching already-read private context after authorization changes', async () => {
     jest.mocked(configModule.loadOpenAIConfig).mockReturnValue({...createOpenAiConfigForTest(), protocol: 'chat_completions', maxTurns: 3});
     const runtime = createOpenAiRuntimeForTest(); prepareStub(runtime);
@@ -1427,6 +1542,8 @@ describe('OpenAI bounded output-limit recovery', () => {
     });
 
     it('keeps the full-answer continuation for an output limit before any declaration repair', async () => {
+      jest.mocked(configModule.loadOpenAIConfig).mockReturnValue({...createOpenAiConfigForTest(),
+        baseURL: 'https://api.deepseek.com/v1', protocol: 'responses'});
       const runtime = createOpenAiRuntimeForTest(); prepareStub(runtime);
       const run = mockRun().mockResolvedValueOnce(recoverableStream(rejected, 'incomplete'))
         .mockResolvedValueOnce(recoverableStream(declared(), 'completed'));
@@ -1434,6 +1551,10 @@ describe('OpenAI bounded output-limit recovery', () => {
       expect(run).toHaveBeenCalledTimes(2);
       expect(recoveryPrompt(run)).toContain('output_limit');
       expect(recoveryPrompt(run)).not.toContain('`invalid_declaration`');
+      for (const call of run.mock.calls) {
+        expect((call[0] as any).modelSettings.providerData ?? {}).not.toHaveProperty('thinking');
+        expect((call[0] as any).modelSettings.providerData ?? {}).not.toHaveProperty('reasoning');
+      }
     });
 
     it('restores the original when declaration repair hits its native output limit, with no third call', async () => {
@@ -1487,15 +1608,17 @@ describe('OpenAI bounded output-limit recovery', () => {
   });
 });
 
-describe('OpenAI declaration repair provider controls', () => {
+describe('OpenAI output-only delivery provider controls', () => {
   it.each([
     ['https://api.deepseek.com/v1', 'chat_completions', {thinking: {type: 'disabled'}}],
     ['https://api.deepseek.com/v1', 'responses', {reasoning: {effort: 'none'}}],
     ['https://open.bigmodel.cn/api/paas/v4', 'chat_completions', {thinking: {type: 'disabled'}}],
     ['https://gateway.example/v1', 'chat_completions', undefined],
     ['', 'chat_completions', undefined],
-  ] as const)('maps %s %s to the declaration_repair controls', (baseURL, protocol, expected) => {
-    expect(__testing.declarationRepairProviderData({baseURL, protocol})).toEqual(expected);
+  ] as const)('maps %s %s to provider-aware delivery controls', (baseURL, protocol, expected) => {
+    for (const purpose of ['declaration_repair', 'continuation'] as const) {
+      expect(__testing.outputOnlyProviderData({baseURL, protocol}, purpose)).toEqual(expected);
+    }
   });
 });
 

@@ -40,7 +40,8 @@ import {copyScopeProvenance, scopeProvenanceForFields,
   type EvidenceScopeProvenanceV1} from '../../types/identityContract';
 import {evidenceReferenceKey, preparedReferenceResolution, preparedEvidenceBindingEligibility, preparedEvidenceMatchesInput,
   type PreparedClaimEvidence} from './claimEvidencePreparation';
-import {bindReadResolutionToAnchor, evidenceReadFailureIsUnreadable, type EvidenceReadResolution} from './evidenceReadView';
+import {bindReadResolutionToAnchor, evidenceReadFailureIsUnreadable, isCurrentEmptyResultRead,
+  type EvidenceReadResolution} from './evidenceReadView';
 import {getCapturedAnchorFacts, markIdentityUnboundEvidenceAnchor, markUnreadableEvidenceAnchor} from './evidenceCapture';
 import {scopeRequiresTargetIdentity, targetRowUpidPredicate, toNumber, wholeResultRowPredicate} from './scopedRowIdentity';
 import {rowObject} from '../../utils/traceProcessorRowUtils';
@@ -904,7 +905,8 @@ function buildAnchor(
   if (identity?.status === 'error' || (requiresTargetIdentity && identity?.status !== 'verified')) {
     anchor.missing = true;
     anchor.confidence = 0;
-    if (identity?.status !== 'error' && citationLeavesTargetIdentityUnbound(envelope, row, ref, scopeProvenance)) {
+    if (identity?.status !== 'error' && (citationLeavesTargetIdentityUnbound(envelope, row, ref, scopeProvenance) ||
+        emptyResultLeavesTargetIdentityUnbound(envelope, ref, scopeProvenance, match.readResolution))) {
       anchor.missingReason = 'cited_scope_identity_unbound';
       markIdentityUnboundEvidenceAnchor(anchor);
     } else {
@@ -912,6 +914,24 @@ function buildAnchor(
     }
   } else if (match.readResolution) bindReadResolutionToAnchor(anchor, match.readResolution);
   return anchor;
+}
+
+/** Empty target fields contain no row identity that could contradict the requested target. */
+function emptyResultLeavesTargetIdentityUnbound(envelope: DataEnvelope, ref: ConclusionContractClaimReference,
+  provenance: EvidenceScopeProvenanceV1 | undefined, resolution: EvidenceReadResolution | undefined): boolean {
+  if (!isCurrentEmptyResultRead(resolution) || !provenance || provenance.invalid ||
+      ['rowIndex', 'rowSelector', 'column', 'value'].some(field => Object.prototype.hasOwnProperty.call(ref, field)) ||
+      provenance.entries.some(entry => entry.availability !== 'available' || entry.scope.traceId !== envelope.meta.traceId ||
+        entry.scope.traceSide !== envelope.meta.traceSide)) return false;
+  const target = provenance.entries.filter(entry => entry.role === 'target');
+  if (target.length !== 1 || !Array.isArray(target[0].fields) || target[0].fields.length !== 0) return false;
+  // Preserve every declared identity conflict. Only a complete existing binding
+  // or the complete absence of identity metadata can leave this empty result unbound.
+  if (envelope.meta.identityStatus !== undefined || envelope.meta.identityRefId !== undefined ||
+      envelope.meta.identityResolution !== undefined) {
+    return deriveIdentity(envelope, undefined, {...provenance, entries: target})?.status === 'verified';
+  }
+  return true;
 }
 
 /**

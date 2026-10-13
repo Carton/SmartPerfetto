@@ -149,6 +149,8 @@ describe('persisted location verdict regressions', () => {
 
 function fixture(options: {body?: string; capture?: boolean; claim?: boolean; inconsistent?: boolean;
   omissions?: boolean; report?: boolean; providerQuery?: {text: string; analysisContextFingerprint?: string};
+  /** Use a registered scene's real report policy; null represents an unknown scene. */
+  reportStrategy?: StrategyDefinition | null;
   identity?: IdentityResolutionV1; scope?: EvidenceScopeProvenanceV1;
   deadlineMs?: number; capabilityRows?: number; capabilityCell?: string;
   source?: {marker: string; declaredMarker?: string; invalid?: boolean; hypothetical?: boolean;
@@ -257,6 +259,10 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
       JSON.stringify({...declared, verified: true}) + '\n```\n-->';
     delete result.conclusionContract;
   }
+  if (options.nativeProjection && !options.source && !options.invalidDeclaration) {
+    result.conclusion = `${body}\n${renderConclusionContractSidecar(declared)}`;
+    delete result.conclusionContract;
+  }
   if (options.absentDeclaration) delete result.conclusionContract;
   const candidate = {runId, attemptId: 'attempt', candidateRef: 'candidate',
     conclusionFingerprint: analysisDeliveryFingerprint(result.conclusion)};
@@ -271,7 +277,7 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
     : undefined;
   const taskKind = options.taskKind ?? 'fact';
   const intentFor = (fingerprint: string) => ({schemaVersion: 1 as const, status: 'resolved' as const, source: 'semantic' as const,
-    registryFingerprint: fingerprint, taskKind, sceneId: 'general',
+    registryFingerprint: fingerprint, taskKind, sceneId: options.reportStrategy?.scene ?? 'general',
     scope: options.report || taskKind === 'investigation' ? 'scene_wide' as const : 'bounded_question' as const,
     recommendedComplexity: 'quick' as const, deliverable: options.report ? 'report' as const : 'answer' as const,
     evidenceAccess: 'existing_only' as const});
@@ -295,7 +301,7 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
         consistency: options.inconsistent ? 'inconsistent' : 'consistent', contentLocations: [location],
         issues: options.inconsistent ? [{code: 'numeric_mismatch', contentLocations: [location]}] : []}],
       omissions: options.omissions ? [{code: 'undeclared_claim', contentLocations: [location]}] : [],
-      requirements: options.report ? [{requirementId: 'detail', applicability: 'applicable', coverage: 'unknown',
+      requirements: options.report && options.reportStrategy === undefined ? [{requirementId: 'detail', applicability: 'applicable', coverage: 'unknown',
         contentLocations: [], claimIds: []}] : []})};
   }));
   const reportStrategy: StrategyDefinition = {scene: 'general', classificationDescription: 'General analysis.',
@@ -305,7 +311,8 @@ function fixture(options: {body?: string; capture?: boolean; claim?: boolean; in
       id: 'detail', label: 'Detail', required: true, triggerPatterns: [], patterns: [], patternGroups: [], recoveryText: {zh: [], en: []},
     }]}};
   const pinnedRegistry = pinnedRegistryForIntent ?? (options.report
-    ? buildStrategyRegistrySnapshotFromDefinitions({definitions: [reportStrategy], overlayGeneration: 'report-test'}) : registry);
+    ? buildStrategyRegistrySnapshotFromDefinitions({definitions: options.reportStrategy === null ? [] :
+      [options.reportStrategy ?? reportStrategy], overlayGeneration: 'report-test'}) : registry);
   attachFinalizationContext(result, {runId, sessionId: result.sessionId, deadlineMs: options.deadlineMs ?? Date.now() + 600_000,
     strategyRegistry: pinnedRegistry, traceIdentity: {currentTraceId: 'trace'},
     selection: options.selection,
@@ -442,6 +449,29 @@ const areaSelection: AnalysisRunSelection = {present: true, kind: 'area', contex
 sideResolution: {status: 'resolved', traceSide: 'current', traceId: 'trace'}};
 
 describe('semantic review necessity', () => {
+  it.each(['media', 'general'])('reviews claims in a registered %s report without a section contract', async scene => {
+    const strategy = strategyTemplates.loadStrategies().get(scene)!;
+    expect(strategy).toBeDefined();
+    expect(strategy.finalReportContract).toBeNull();
+    const run = fixture({report: true, reportStrategy: strategy});
+    const final = await run.run();
+    expect(run.dispatch).toHaveBeenCalledTimes(1);
+    expect(final.semanticAssessment).toMatchObject({status: 'checked', claims: [{consistency: 'consistent'}]});
+    expect(final.result.claimVerificationResult).toMatchObject({claimResults: [{status: 'verified'}]});
+    expect(final.result.deliveryAssurance).toMatchObject({completion: 'passed', report: 'not_applicable'});
+    expect(final.result.conclusion).toBe(run.result.conclusion);
+    expect(final.result.partial).not.toBe(true);
+  });
+
+  it('does not invent an empty report policy for an unknown scene', async () => {
+    const run = fixture({report: true, reportStrategy: null});
+    const final = await run.run();
+    expect(run.dispatch).not.toHaveBeenCalled();
+    expect(final.semanticAssessment).toMatchObject({reason: 'invalid_snapshot', notCheckedDetail: 'report_requirement_pin_mismatch'});
+    expect(final.result.deliveryAssurance).toMatchObject({completion: 'passed', report: 'not_checked'});
+    expect(final.result.conclusion).toBe(run.result.conclusion);
+  });
+
   const finalize = async (options: Parameters<typeof fixture>[0]) => {
     const run = fixture({currentRead: true, ...options});
     const events: FinalizationProgressEvent[] = [];
@@ -562,6 +592,19 @@ describe('semantic review necessity', () => {
     await withRunManifestLifecycle(second, () => finalize({claim: false}));
     expect(skipped.seal()).toMatchObject({finalReview: {necessity: 'not_required', triggers: [], declaredClaimCount: 0}});
     expect(skipped.seal().modelCalls).toBeUndefined();
+  });
+
+  it.each([
+    {options: {absentDeclaration: true}, status: 'absent', declaredClaimCount: 0},
+    {options: {nativeProjection: true}, status: 'valid', declaredClaimCount: 1},
+    {options: {invalidDeclaration: true}, status: 'invalid', declaredClaimCount: 1},
+  ])('records canonical declaration $status independently from claim verification', async ({options, status, declaredClaimCount}) => {
+    const lifecycle = createRunManifestLifecycle({runId: 'run', sessionId: 'final-result-test',
+      scope: {tenantId: 'tenant', workspaceId: 'workspace'}, runtime: 'openai-agents-sdk', outputLanguage: 'en',
+      analysisMode: 'fast', skillRegistry: {registryFingerprint: 'registry', evolutionOverlayGeneration: 'builtin', skills: []} as never});
+    await withRunManifestLifecycle(lifecycle, () => finalize(options));
+    expect(lifecycle.builder.runtimePerformanceRecorder.seal().declaration).toEqual({
+      status, declaredClaimCount, repair: 'not_requested'});
   });
 
   it('reviews a run with source access that made no source call: authorized history can carry source', async () => {
@@ -893,6 +936,30 @@ describe('issued investigation ledger through finalization', () => {
     expect(final.result.deliveryAssurance).toMatchObject({completion: 'passed', claims: 'passed', investigationEvidence: 'passed'});
   });
 
+  it('isolates a bad investigation location without losing verified claims or delivered report content', async () => {
+    const target = investigationRun({report: true});
+    const originalDispatch = target.dispatch.getMockImplementation()!;
+    target.dispatch.mockImplementation(async input => {
+      const response = await originalDispatch(input);
+      if (response.status !== 'ok') throw new Error('fixture expected a review');
+      const review = JSON.parse(response.text);
+      review.investigation[0].contentLocations = [{text: 'Not a quotation from this answer.'}];
+      return {...response, text: JSON.stringify(review)};
+    });
+    const body = target.result.conclusion;
+    const final = await target.run();
+    expect(target.dispatch).toHaveBeenCalledTimes(1);
+    expect(final.semanticAssessment).toMatchObject({status: 'coverage_incomplete',
+      notCheckedDetail: 'resp_investigation_invalid_location'});
+    expect(final.result.claimVerificationResult?.claimResults[0].status).toBe('verified');
+    expect(final.result.deliveryAssurance).toMatchObject({completion: 'passed', claims: 'passed',
+      report: 'passed', investigation: 'coverage_incomplete'});
+    expect(final.result.investigationAssessment?.requirements[0].coverage).toBe('unknown');
+    expect(final.result.conclusion).toBe(body);
+    expect(final.result.partial).not.toBe(true);
+    expect(final.result.terminationReason).toBeUndefined();
+  });
+
   // Every delivery surface reads the finalized assessment through an explicit
   // field copier, and the projection treats any difference from its input as
   // tampering. A field the finalizer emits but the copier does not know
@@ -1187,6 +1254,24 @@ describe('shared final analysis boundary', () => {
       expect(final.result.claimVerificationResult?.claimResults[0]).toMatchObject({status: 'partial',
         numericPresentation: {status: 'not_checked', reason: 'quote_unresolved'}});
       expect(final.result.claimVerificationResult?.passed).toBe(false);
+    });
+
+    it.each([false, true])('keeps quote-unresolved rounding unverified with an issued reference alias=%s', async toolCallReference => {
+      const body = 'The captured value is 32.6 ms.';
+      const final = await fixture({toolCallReference, report: true, numericCell: numericCell('32.6 ms', '99.9 ms'),
+        dispatch: async () => ({status: 'ok', text: JSON.stringify({schemaVersion: 'final_semantic_response@1',
+          bodyCoverage: {status: 'complete', reviewedSpans: [{start: 0, end: body.length}]},
+          claims: [{claimId: 'count', consistency: 'inconsistent', contentLocations: [{start: 22, end: 29, text: '32.6 ms'}],
+            issues: [{code: 'numeric_mismatch', contentLocations: [{start: 22, end: 29, text: '32.6 ms'}]}]}],
+          omissions: [], requirements: []})})}).run();
+      expect(final.result.claimVerificationResult).toMatchObject({status: 'partial', passed: false,
+        unsupportedClaimCount: 0, claimResults: [{status: 'partial', numericPresentation: {
+          status: 'not_checked', reason: 'quote_unresolved'}}]});
+      expect(final.semanticAssessment).toMatchObject({claims: [{consistency: 'inconsistent'}]});
+      expect(final.result.claimVerificationResult?.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({code: 'numeric_presentation_not_checked', severity: 'warning'}),
+        expect.objectContaining({code: 'semantic_numeric_display_rounding', severity: 'warning'}),
+      ]));
     });
 
     it('retains a reviewer disagreement without asserting an arithmetic error or upgrading the claim', async () => {

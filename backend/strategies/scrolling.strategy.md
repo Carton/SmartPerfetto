@@ -148,6 +148,7 @@ final_report_contract:
 - 条件项只在用户问题、plan 或 trace 证据命中 trigger 时强制；无数据用 `skipped` + reason/waiver。
 - 核心链路：`scrolling_analysis` → 读主线程连续工作与帧结果 artifact → 按实际任务/等待追源。FrameTimeline 是出帧结果参考，不能用帧边界裁掉原因，也不能只围绕红黄帧取证。
   整条 Trace 的总体使用 `frame_timeline_population` 的 `total_frames/jank_frames`（所有进程、按 UPID+frame_key、原始 jank 标签含 Buffer Stuffing），与目标 App/Session 的感知掉帧口径分别引用，不用临时 SQL 重新计数替代已有捕获。
+- 身份 `ambiguous` 按 Phase 1.6 消歧并带证据 UPID 重试；未解仅限制相关归因，继续交付独立 SQL/系统结论。
 - TextureView 的 `signal_inventory.event_count` 是信号次数，不是帧数；`consumer_notification` cadence gap 只是时序候选。未与 FrameTimeline / present 证据明确关联前，不得称为 hidden jank、producer stall 或根因。
 
 **Required phases**
@@ -214,8 +215,9 @@ final_report_contract:
 如果目标包名（下面的 `package`）来自自动焦点检测、或用户/trace 证据提示进程名与包名/线程名/layer 不一致，先执行 **Phase 1.6 进程身份交叉确认**，再调用本阶段的 `scrolling_analysis`。
 
 ```
-invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_end>", package: "<resolver.recommended_process_name_param 或用户明确指定的包名>" })
+invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_end>", package: "<用户明确指定的包名>" })
 ```
+- 身份消歧后的重试使用 Phase 1.6 的 `upid` 调用，不能只把候选的名字填回 `package`。
 - 建议传入 start_ts 和 end_ts 以获得更精确的结果
 - 如果不知道 trace 时间范围，先用 SQL 查询：
   `SELECT printf('%d', trace_start()) as start_ts, printf('%d', trace_end()) as end_ts`
@@ -294,15 +296,22 @@ invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_
 
 **Phase 1.6 — 进程身份交叉确认（当 process_name 可能不可靠时）：**
 
-系统会在进程级 Skill 执行前自动做身份准入。满足任一条件时，若准入返回 ambiguous/blocked，调用 `invoke_skill("process_identity_resolver", { process_name, start_ts, end_ts })` 查看候选进程，再继续深钻：
+系统会在进程级 Skill 执行前自动做身份准入。准入返回 ambiguous/blocked（包括 `scene_evidence` 未执行）时，先读取已有候选；缺少消歧证据时调用 `invoke_skill("process_identity_resolver", { process_name, start_ts, end_ts })`。以下情况也需要核对身份：
 - `process_name` 来自自动焦点检测，而不是用户明确指定
 - 用户反馈 Perfetto UI 里进程名不对、线程名/layer 看起来对
 - `scrolling_analysis`、架构专属 Skill 或自定义 SQL 返回空结果，但 FrameTimeline/layer/线程名明显有目标应用信号
 
 处理规则：
-- 使用 resolver 第一名候选的 `recommended_process_name_param` 作为后续 `scrolling_analysis` / `jank_frame_detail` / `frame_blocking_calls` 的 `process_name`
-- 在结论中把 `canonical_package_name` 当作用户可读的目标应用身份；不要把它和旧 Skill 的 `process_name` 参数混为一谈
-- 如果 resolver 只有 `weak_match` 或提示 shared UID，多抓取候选行并说明身份不确定性；必要时先不传 `process_name` 跑全量概览，再按 `upid`/线程/layer 过滤
+- 对照用户目标、候选的 process/cmdline、线程/layer 关联及原分析窗口内活动，确认实际进程实例。排名第一、同名或高分都不能单独消除歧义；同名重启实例要按 trace 内 `upid` 区分。
+- 只有证据足以选定目标时，从该候选行原样取正整数 `upid`，保留原分析窗口重试：
+
+  ```
+  invoke_skill("scrolling_analysis", { upid: <选定候选行的 upid>, start_ts, end_ts })
+  ```
+
+  后续目标级 Skill 继续携带这个 `upid`；名称按各 Skill 声明的输入传递，不把 `canonical_package_name` 或 `recommended_process_name_param` 当成唯一实例标识，也不推测 UPID。
+- 显式 UPID 仍须通过门禁；shared UID、包名冲突或 `weak_match` 未解决时，说明候选与缺口，必要时请用户明确目标。不得删除目标过滤、盲选第一名或反复按同一个名字重试。
+- SQL 可用于补充消歧和独立证据，但查询成功不代表身份已验证。目标级 SQL 必须保留已确认的 UPID 与原时间范围；身份仍不确定时交付明确标注范围的系统/候选观察，不能归为已确认的目标 App 结论，也不能声称未执行的 Skill 已产出指标。局部身份或核验缺口不阻塞其余有效证据和正文交付；逐项说明限制。
 <!-- /strategy-detail -->
 
 <!-- strategy-detail id="root_cause_drill" title="滑动根因分支深钻和 display pipeline 边界" keywords="root cause,reason_code,jank_frame_detail,frame_blocking_calls,blocking_chain_analysis,SurfaceFlinger,Fence,BufferQueue" -->

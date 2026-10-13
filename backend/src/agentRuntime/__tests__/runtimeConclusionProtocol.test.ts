@@ -640,6 +640,27 @@ describe('runtime native declaration completion', () => {
     }
   });
 
+  it.each([
+    ['unclosed ordinary comment', '<!-- smartperfetto:conclusion-ledger {"claims": []}'],
+    ['unclosed Markdown fence', '```json\n{"claims": []}'],
+  ])('keeps an accepted repair outside an %s in the original body', (_name, tail) => {
+    // Minimal reproduction of b20-cpu_runnable_starvation's captured boundary:
+    // a non-protocol comment in the original body swallowed the appended repair.
+    const originalBody = `Measured value: 42 ms.\n\n${tail}`;
+    expect(inspectCandidateProtocol(originalBody).status).toBe('absent');
+    const request = requestNativeDeclarationCompletion({intent: intent('investigation'),
+      completion: {status: 'completed'}, candidate: originalBody, remainingDeliveryTurns: 1})!;
+    expect(inspectCandidateProtocol(`${originalBody}\n\n${declaration()}`).status).toBe('absent');
+    const accepted = acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+      candidate: declaration()})!;
+    expect(inspectCandidateProtocol(accepted).status).toBe('valid');
+    expect(inspectCandidateProtocol(accepted).canonicalBody.trim()).toBe(originalBody);
+    expect(inspectCandidateProtocol(accepted).sidecar.rawPayload)
+      .toEqual(inspectCandidateProtocol(declaration()).sidecar.rawPayload);
+    expect(acceptNativeDeclarationCompletion({request, completion: {status: 'completed'},
+      candidate: declaration(), outputByteLimit: Buffer.byteLength(accepted) - 1})).toBeUndefined();
+  });
+
   it('rejects a completion without a declaration', () => {
     const request = requestNativeDeclarationCompletion({
       intent: intent('investigation'), completion: {status: 'completed'}, candidate: 'Measured value: 42 ms.', remainingDeliveryTurns: 1,

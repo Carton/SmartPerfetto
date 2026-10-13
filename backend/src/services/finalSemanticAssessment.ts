@@ -125,8 +125,8 @@ export interface FinalSemanticAssessment {
     'budget_insufficient';
   /**
    * Closed-vocabulary triage detail for the reason above: declaration parse
-   * issue codes, or transport facts (`http_429`, `attempts_2`). Never raw
-   * provider text, claim ids, or field values.
+   * issue codes, input-binding failures, or transport facts (`http_429`, `attempts_2`).
+   * Never raw provider text, claim ids, or field values.
    */
   readonly notCheckedDetail?: string;
   /** Private parser receipt only; contains no provider text, claim IDs or field values. */
@@ -354,42 +354,64 @@ function validSourceLedger(raw: unknown): boolean {
   });
 }
 
-function inputIsBound(captured: CapturedSnapshot, context: RuntimeFinalizationContext): boolean {
-  const {canonicalCandidate: candidate, intent} = captured;
-  const snapshot = captured.snapshot.semanticSourceAlias
-    ? expandSemanticSourceSnapshot(captured.snapshot) as FinalSemanticSnapshot | undefined : captured.snapshot;
-  if (!snapshot) return false;
-  if (context.deliveryContext.entry === 'historical_restore' ||
-    ![candidate.candidateRef, candidate.runId, candidate.attemptId].every(nonempty) ||
-    candidate.runId !== captured.runId || candidate.conclusionFingerprint !== analysisDeliveryFingerprint(snapshot.body) ||
-    !member(snapshot.inputCoverage, ['complete', 'incomplete']) ||
-    !member(snapshot.declarationBindingEligibility, ['eligible', 'ineligible', 'legacy_unchecked']) ||
-    typeof snapshot.query !== 'string' ||
-    !nonempty(snapshot.body) || !hasOwn(snapshot, 'evidenceSnapshot') ||
-    intent.registryFingerprint !== captured.registryFingerprint || !validSourceLedger(snapshot.sourceUse) ||
-    (snapshot.selectionScope === undefined || captured.runSelection === undefined
+type SemanticInputBindingIssue = 'source_alias_expansion_invalid' | 'candidate_binding_mismatch' |
+  'body_fingerprint_mismatch' | 'snapshot_shape_invalid' | 'registry_pin_mismatch' |
+  'source_ledger_invalid' | 'selection_mismatch' | 'report_requirement_pin_mismatch' |
+  'investigation_pin_mismatch' | 'investigation_evidence_mismatch';
+
+/** Name the closed binding check that failed without retaining any rejected value. */
+function inputBindingIssue(captured: CapturedSnapshot, context: RuntimeFinalizationContext): SemanticInputBindingIssue | undefined {
+  let issue: SemanticInputBindingIssue = 'source_alias_expansion_invalid';
+  try {
+    const {canonicalCandidate: candidate, intent} = captured;
+    const snapshot = captured.snapshot.semanticSourceAlias
+      ? expandSemanticSourceSnapshot(captured.snapshot) as FinalSemanticSnapshot | undefined : captured.snapshot;
+    if (!snapshot) return issue;
+    issue = 'candidate_binding_mismatch';
+    if (context.deliveryContext.entry === 'historical_restore' ||
+      ![candidate.candidateRef, candidate.runId, candidate.attemptId].every(nonempty) ||
+      candidate.runId !== captured.runId) return issue;
+    issue = 'body_fingerprint_mismatch';
+    if (candidate.conclusionFingerprint !== analysisDeliveryFingerprint(snapshot.body)) return issue;
+    issue = 'snapshot_shape_invalid';
+    if (!member(snapshot.inputCoverage, ['complete', 'incomplete']) ||
+      !member(snapshot.declarationBindingEligibility, ['eligible', 'ineligible', 'legacy_unchecked']) ||
+      typeof snapshot.query !== 'string' || !nonempty(snapshot.body) || !hasOwn(snapshot, 'evidenceSnapshot')) return issue;
+    issue = 'registry_pin_mismatch';
+    if (intent.registryFingerprint !== captured.registryFingerprint) return issue;
+    issue = 'source_ledger_invalid';
+    if (!validSourceLedger(snapshot.sourceUse)) return issue;
+    issue = 'selection_mismatch';
+    if (snapshot.selectionScope === undefined || captured.runSelection === undefined
       ? snapshot.selectionScope !== captured.runSelection
-      : !sameValues(snapshot.selectionScope, captured.runSelection))) return false;
-  const selection = captured.runSelection;
-  if (selection?.present && selection.sideResolution.status === 'resolved' &&
-    selection.sideResolution.traceId !== captured.traceIdentity.currentTraceId) return false;
-  if (snapshot.conclusionContract !== undefined && (!record(snapshot.conclusionContract) ||
-    snapshot.conclusionContract.schemaVersion !== 'conclusion_contract_v1')) return false;
-  const pin = snapshot.reportRequirements;
-  if (intent.status === 'resolved' && intent.deliverable === 'report') {
-    const strategy = context.strategyRegistry.getStrategy(intent.sceneId);
-    if (!pin || !strategy || pin.sceneId !== intent.sceneId || pin.registryFingerprint !== captured.registryFingerprint ||
-      !sameValues(pin.requirements, (strategy.finalReportContract?.requiredSections ?? []).map(requirementProjection))) return false;
-  } else if (pin && (pin.sceneId !== intent.sceneId || pin.registryFingerprint !== captured.registryFingerprint)) return false;
-  if (pin && (!Array.isArray(pin.requirements) || pin.requirements.some(requirement => !nonempty(requirement.id)) ||
-    new Set(pin.requirements.map(requirement => requirement.id)).size !== pin.requirements.length)) return false;
-  const investigation = resolveAnalysisInvestigationRequirements({intent, strategyRegistry: context.strategyRegistry});
-  if ((snapshot.investigationRequirements || investigation.status === 'resolved') &&
-    !sameValues(snapshot.investigationRequirements, investigation)) return false;
-  if (snapshot.investigationEvidence && (!context.investigationEvidence ||
-    !sameValues(snapshot.investigationEvidence, compactInvestigationEvidenceForSemantic(context.investigationEvidence,
-      snapshot.investigationEvidence.byteBudget)))) return false;
-  return true;
+      : !sameValues(snapshot.selectionScope, captured.runSelection)) return issue;
+    const selection = captured.runSelection;
+    if (selection?.present && selection.sideResolution.status === 'resolved' &&
+      selection.sideResolution.traceId !== captured.traceIdentity.currentTraceId) return issue;
+    issue = 'snapshot_shape_invalid';
+    if (snapshot.conclusionContract !== undefined && (!record(snapshot.conclusionContract) ||
+      snapshot.conclusionContract.schemaVersion !== 'conclusion_contract_v1')) return issue;
+    issue = 'report_requirement_pin_mismatch';
+    const pin = snapshot.reportRequirements;
+    if (intent.status === 'resolved' && intent.deliverable === 'report') {
+      const strategy = context.strategyRegistry.getStrategy(intent.sceneId);
+      if (!pin || !strategy || pin.sceneId !== intent.sceneId || pin.registryFingerprint !== captured.registryFingerprint ||
+        !sameValues(pin.requirements, (strategy.finalReportContract?.requiredSections ?? []).map(requirementProjection))) return issue;
+    } else if (pin && (pin.sceneId !== intent.sceneId || pin.registryFingerprint !== captured.registryFingerprint)) return issue;
+    if (pin && (!Array.isArray(pin.requirements) || pin.requirements.some(requirement => !nonempty(requirement.id)) ||
+      new Set(pin.requirements.map(requirement => requirement.id)).size !== pin.requirements.length)) return issue;
+    issue = 'investigation_pin_mismatch';
+    const investigation = resolveAnalysisInvestigationRequirements({intent, strategyRegistry: context.strategyRegistry});
+    if ((snapshot.investigationRequirements || investigation.status === 'resolved') &&
+      !sameValues(snapshot.investigationRequirements, investigation)) return issue;
+    issue = 'investigation_evidence_mismatch';
+    if (snapshot.investigationEvidence && (!context.investigationEvidence ||
+      !sameValues(snapshot.investigationEvidence, compactInvestigationEvidenceForSemantic(context.investigationEvidence,
+        snapshot.investigationEvidence.byteBudget)))) return issue;
+    return undefined;
+  } catch {
+    return issue;
+  }
 }
 
 function utf16Boundary(body: string, offset: number): boolean {
@@ -782,7 +804,7 @@ function parseResponseStrict(
     expectedCount: requirementMap.size, actualCount: seenRequirements.size,
   });
   const requirements = pinnedRequirements.map(requirement => parsedRequirements.get(requirement.id) ?? unknownRequirement(requirement.id));
-  const investigation = parseInvestigationResponse(value, captured, locationFormat, locationCatalog, investigationRecordCatalog);
+  const investigation = parseInvestigationResponse(value, captured, locationFormat, degrade, locationCatalog, investigationRecordCatalog);
   // Coverage of the claims the review owns: the declaration's valid claims. A
   // partially valid declaration (per-item failures only) can still cover them
   // completely; a root-level failure keeps its own ineligible reason.
@@ -797,7 +819,7 @@ function parseResponseStrict(
       (requirement.applicability === 'unknown' || (requirement.applicability === 'applicable' && requirement.coverage === 'unknown')))
       ? 'incomplete' : 'complete',
   };
-  const incomplete = Object.values(coverage).includes('incomplete');
+  const incomplete = Object.values(coverage).includes('incomplete') || investigation.status === 'coverage_incomplete';
   // A degraded item keeps the triage vocabulary of a rejected response without
   // discarding the judgments that did parse. A dropped extra item that left every
   // declared judgment intact is recorded but explains no missing coverage.
@@ -828,6 +850,7 @@ function parseResponse(
 function parseInvestigationResponse(
   value: Record<string, unknown>, captured: CapturedSnapshot,
   locationFormat: 'offsets_with_text' | 'exact_quote' | 'catalog_or_exact_quote',
+  degrade: (diagnostic: FinalSemanticResponseDiagnostic) => void,
   locationCatalog?: SemanticLocationCatalog,
   investigationRecordCatalog?: SemanticInvestigationRecordCatalog,
 ):
@@ -835,67 +858,83 @@ function parseInvestigationResponse(
   if (!member(value.schemaVersion, ['final_semantic_response@3', 'final_semantic_response@4'])) {
     return {status: 'not_checked', requirements: []};
   }
-  if (!Array.isArray(value.investigation)) return invalidResponse('investigation', 'invalid_shape');
   const pin = captured.snapshot.investigationRequirements;
   const required = pin?.status === 'resolved' ? pin.requirements : [];
   const definitions = new Map(required.map(item => [item.id, item]));
   const records = new Set(captured.snapshot.investigationEvidence?.records.map(item => item.recordId) ?? []);
   const ambiguousRecords = new Set(investigationRecordCatalog?.ambiguousIds ?? []);
   const seen = new Set<string>();
-  const rows: InvestigationContentAssessment[] = [];
-  for (const [index, item] of value.investigation.entries()) {
-    if (!record(item) || !keys(item, ['requirementId', 'applicability', 'coverage', 'contentLocations',
-      'evidenceRecordIds', 'scopeMatch', 'evidenceStatus']) || !nonempty(item.requirementId) ||
-      !member(item.applicability, ['applicable', 'not_applicable', 'unknown']) ||
-      !member(item.coverage, ['covered', 'missing', 'unknown']) ||
-      !member(item.scopeMatch, ['matched', 'mismatched', 'unknown']) ||
-      !member(item.evidenceStatus, ['observed', 'insufficient', 'not_checked', 'failed', 'not_applicable', 'unknown']) ||
-      !Array.isArray(item.evidenceRecordIds)) {
-      return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1, constraint: 'investigation_row_shape'});
-    }
-    if (!definitions.has(item.requirementId)) return invalidResponse('investigation', 'invalid_reference',
-      {ordinal: index + 1, constraint: 'unknown_requirement'});
-    if (seen.has(item.requirementId)) return invalidResponse('investigation', 'invalid_reference',
-      {ordinal: index + 1, constraint: 'duplicate_requirement'});
-    const evidenceRecordIds: string[] = [];
-    const referenced = new Set<string>();
-    for (const id of item.evidenceRecordIds) {
-      if (!nonempty(id)) return invalidResponse('investigation', 'invalid_reference',
-        {ordinal: index + 1, constraint: 'unknown_record'});
-      const alias = investigationRecordCatalog?.aliases[id];
-      if (ambiguousRecords.has(id) || (alias !== undefined && ambiguousRecords.has(alias))) {
-        return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1, constraint: 'ambiguous_record'});
+  const parsedRows = new Map<string, InvestigationContentAssessment>();
+  const unknownRequirement = (id: string): InvestigationContentAssessment => ({requirementId: id,
+    applicability: fixedInvestigationApplicability(definitions.get(id)!, captured.intent.scope) ?? 'unknown',
+    coverage: 'unknown', contentLocations: [], evidenceRecordIds: [], scopeMatch: 'unknown', evidenceStatus: 'unknown'});
+  const responseRows = Array.isArray(value.investigation) ? value.investigation : [];
+  if (!Array.isArray(value.investigation)) degrade({stage: 'investigation', code: 'invalid_shape'});
+  for (const [index, item] of responseRows.entries()) {
+    const id = record(item) && nonempty(item.requirementId) && definitions.has(item.requirementId)
+      ? item.requirementId : undefined;
+    const duplicate = id !== undefined && seen.has(id);
+    // Register even malformed known rows: a later duplicate cannot repair or
+    // override their judgment. Every pinned requirement gets one output row.
+    if (id !== undefined) seen.add(id);
+    try {
+      if (!record(item) || !keys(item, ['requirementId', 'applicability', 'coverage', 'contentLocations',
+        'evidenceRecordIds', 'scopeMatch', 'evidenceStatus']) || !nonempty(item.requirementId) ||
+        !member(item.applicability, ['applicable', 'not_applicable', 'unknown']) ||
+        !member(item.coverage, ['covered', 'missing', 'unknown']) ||
+        !member(item.scopeMatch, ['matched', 'mismatched', 'unknown']) ||
+        !member(item.evidenceStatus, ['observed', 'insufficient', 'not_checked', 'failed', 'not_applicable', 'unknown']) ||
+        !Array.isArray(item.evidenceRecordIds)) {
+        return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1, constraint: 'investigation_row_shape'});
       }
-      const originalId = alias ?? (records.has(id) ? id : undefined);
-      if (originalId === undefined || !records.has(originalId)) return invalidResponse('investigation', 'invalid_reference',
-        {ordinal: index + 1, constraint: 'unknown_record'});
-      if (referenced.has(originalId)) return invalidResponse('investigation', 'invalid_reference',
-        {ordinal: index + 1, constraint: 'duplicate_record'});
-      referenced.add(originalId);
-      evidenceRecordIds.push(originalId);
+      if (!definitions.has(item.requirementId)) return invalidResponse('investigation', 'invalid_reference',
+        {ordinal: index + 1, constraint: 'unknown_requirement'});
+      if (duplicate) return invalidResponse('investigation', 'invalid_reference',
+        {ordinal: index + 1, constraint: 'duplicate_requirement'});
+      const evidenceRecordIds: string[] = [];
+      const referenced = new Set<string>();
+      for (const id of item.evidenceRecordIds) {
+        if (!nonempty(id)) return invalidResponse('investigation', 'invalid_reference',
+          {ordinal: index + 1, constraint: 'unknown_record'});
+        const alias = investigationRecordCatalog?.aliases[id];
+        if (ambiguousRecords.has(id) || (alias !== undefined && ambiguousRecords.has(alias))) {
+          return invalidResponse('investigation', 'invalid_reference', {ordinal: index + 1, constraint: 'ambiguous_record'});
+        }
+        const originalId = alias ?? (records.has(id) ? id : undefined);
+        if (originalId === undefined || !records.has(originalId)) return invalidResponse('investigation', 'invalid_reference',
+          {ordinal: index + 1, constraint: 'unknown_record'});
+        if (referenced.has(originalId)) return invalidResponse('investigation', 'invalid_reference',
+          {ordinal: index + 1, constraint: 'duplicate_record'});
+        referenced.add(originalId);
+        evidenceRecordIds.push(originalId);
+      }
+      const locations = parseLocations(item.contentLocations, captured.snapshot.body, locationFormat, locationCatalog);
+      const definition = definitions.get(item.requirementId)!;
+      if (!locations) return invalidResponse('investigation', 'invalid_location', {ordinal: index + 1});
+      let constraint: FinalSemanticResponseDiagnostic['constraint'];
+      if (fixedInvestigationApplicability(definition, captured.intent.scope) && item.applicability !== 'applicable') {
+        constraint = 'scene_wide_applicability';
+      } else if (item.applicability !== 'applicable' && item.coverage !== 'unknown') {
+        constraint = 'non_applicable_coverage';
+      } else if ((item.coverage === 'covered' || item.applicability === 'not_applicable') && !locations.length) {
+        constraint = 'content_location_required';
+      } else if (item.evidenceStatus === 'observed' && (!item.evidenceRecordIds.length || item.scopeMatch !== 'matched')) {
+        constraint = 'observed_evidence_required';
+      }
+      if (constraint) return invalidResponse('investigation', 'invalid_constraint', {ordinal: index + 1, constraint});
+      parsedRows.set(item.requirementId, {requirementId: item.requirementId, applicability: item.applicability, coverage: item.coverage,
+        contentLocations: locations, evidenceRecordIds,
+        scopeMatch: item.scopeMatch, evidenceStatus: item.evidenceStatus});
+    } catch (error) {
+      if (!(error instanceof SemanticResponseParseFailure)) throw error;
+      degrade(error.diagnostic);
+      if (id !== undefined) parsedRows.set(id, unknownRequirement(id));
     }
-    const locations = parseLocations(item.contentLocations, captured.snapshot.body, locationFormat, locationCatalog);
-    const definition = definitions.get(item.requirementId)!;
-    if (!locations) return invalidResponse('investigation', 'invalid_location', {ordinal: index + 1});
-    let constraint: FinalSemanticResponseDiagnostic['constraint'];
-    if (fixedInvestigationApplicability(definition, captured.intent.scope) && item.applicability !== 'applicable') {
-      constraint = 'scene_wide_applicability';
-    } else if (item.applicability !== 'applicable' && item.coverage !== 'unknown') {
-      constraint = 'non_applicable_coverage';
-    } else if ((item.coverage === 'covered' || item.applicability === 'not_applicable') && !locations.length) {
-      constraint = 'content_location_required';
-    } else if (item.evidenceStatus === 'observed' && (!item.evidenceRecordIds.length || item.scopeMatch !== 'matched')) {
-      constraint = 'observed_evidence_required';
-    }
-    if (constraint) return invalidResponse('investigation', 'invalid_constraint', {ordinal: index + 1, constraint});
-    seen.add(item.requirementId);
-    rows.push({requirementId: item.requirementId, applicability: item.applicability, coverage: item.coverage,
-      contentLocations: locations, evidenceRecordIds,
-      scopeMatch: item.scopeMatch, evidenceStatus: item.evidenceStatus});
   }
-  if (seen.size !== definitions.size) return invalidResponse('investigation_set', 'set_mismatch', {
+  if (seen.size !== definitions.size) degrade({stage: 'investigation_set', code: 'set_mismatch',
     expectedCount: definitions.size, actualCount: seen.size,
   });
+  const rows = required.map(requirement => parsedRows.get(requirement.id) ?? unknownRequirement(requirement.id));
   return {status: pin?.status !== 'resolved' ? 'not_checked' : rows.some(item =>
     definitions.get(item.requirementId)?.required !== false && (item.applicability === 'unknown' ||
       item.applicability === 'applicable' && item.coverage === 'unknown')) ? 'coverage_incomplete' : 'checked', requirements: rows};
@@ -908,19 +947,22 @@ export function assessFinalSemantics(input: FinalSemanticAssessmentInput): Promi
   let captured: CapturedSnapshot;
   let snapshotFingerprint: string;
   let limits: FinalSemanticAssessmentInput['limits'];
+  let captureIssue: 'snapshot_capture_invalid' | 'limits_capture_invalid' = 'snapshot_capture_invalid';
   try {
     // Read no provider configuration, private evidence handle, or unprojected ledger.
     captured = freezeJson({ruleVersion: FINAL_SEMANTIC_RULE_VERSION, canonicalCandidate: input.canonicalCandidate,
       snapshot: input.snapshot, runId: context.runId, intent: context.turnIntent,
       traceIdentity: context.traceIdentity, runSelection: context.getSelection(signal),
       registryFingerprint: context.strategyRegistry.registryFingerprint});
+    captureIssue = 'limits_capture_invalid';
     limits = freezeJson(input.limits ?? {});
+    captureIssue = 'snapshot_capture_invalid';
     snapshotFingerprint = fingerprint(captured);
   } catch {
     const existing = slots.get(context);
     if (existing) return existing.fingerprint === undefined ? existing.promise :
       Promise.resolve(emptyAssessment('not_checked', 'snapshot_changed'));
-    const promise = Promise.resolve(emptyAssessment('not_checked', 'invalid_snapshot'));
+    const promise = Promise.resolve(emptyAssessment('not_checked', 'invalid_snapshot', undefined, undefined, undefined, captureIssue));
     slots.set(context, {promise});
     return promise;
   }
@@ -943,8 +985,8 @@ export function assessFinalSemantics(input: FinalSemanticAssessmentInput): Promi
       const detailCodes = declarationIssueCodes(captured.snapshot.protocolDiagnostics, captured.snapshot.conclusionContract);
       return fail('not_checked', 'invalid_declarations', detailCodes.join(',') || undefined);
     }
-    try { if (!inputIsBound(captured, context)) return fail('not_checked', 'invalid_snapshot'); }
-    catch { return fail('not_checked', 'invalid_snapshot'); }
+    const bindingIssue = inputBindingIssue(captured, context);
+    if (bindingIssue) return fail('not_checked', 'invalid_snapshot', bindingIssue);
     // Invalid per-item entries are outside the review's scope by design; only
     // the valid declared claims must be well-formed and uniquely identified.
     const declarations = (captured.snapshot.conclusionContract?.claims ?? []).filter(claim => claim.valid !== false);
@@ -957,7 +999,7 @@ export function assessFinalSemantics(input: FinalSemanticAssessmentInput): Promi
     if (!record(limits) || !keys(limits, [], ['inputBytes', 'outputBytes']) ||
       !Number.isSafeInteger(inputBytes) || inputBytes <= 0 || inputBytes > FINAL_SEMANTIC_INPUT_BYTE_LIMIT ||
       !Number.isSafeInteger(outputBytes) || outputBytes <= 0 || outputBytes > FINAL_SEMANTIC_OUTPUT_BYTE_LIMIT) {
-      return fail('not_checked', 'invalid_configuration');
+      return fail('not_checked', 'invalid_configuration', 'limits_shape_invalid');
     }
     let assembled: ReturnType<typeof buildFinalSemanticPrompt>;
     try { assembled = buildFinalSemanticPrompt(captured); }

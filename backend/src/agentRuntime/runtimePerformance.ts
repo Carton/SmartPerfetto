@@ -148,6 +148,18 @@ export interface RuntimePerformanceFinalReviewReceiptV1 {
   declaredClaimCount: number;
 }
 
+export const RUNTIME_DECLARATION_STATUSES = ['absent', 'valid', 'partially_valid', 'invalid'] as const;
+export const RUNTIME_DECLARATION_REPAIR_OUTCOMES = [
+  'not_requested', 'accepted', 'rejected', 'budget_skipped', 'cancelled', 'error', 'not_completed',
+] as const;
+
+/** The first canonical declaration and its repair outcome; counts and closed facts only. */
+export interface RuntimePerformanceDeclarationReceiptV1 {
+  status: typeof RUNTIME_DECLARATION_STATUSES[number];
+  declaredClaimCount: number;
+  repair: typeof RUNTIME_DECLARATION_REPAIR_OUTCOMES[number];
+}
+
 export interface RuntimePerformanceReceiptV1 {
   schemaVersion: 1;
   firstOutputMs?: number;
@@ -157,6 +169,7 @@ export interface RuntimePerformanceReceiptV1 {
   /** Absent in receipts recorded before per-call records existed. */
   modelCalls?: RuntimePerformanceModelCallReceiptV1[];
   finalReview?: RuntimePerformanceFinalReviewReceiptV1;
+  declaration?: RuntimePerformanceDeclarationReceiptV1;
   deliveryBudgets?: RuntimePerformanceDeliveryBudgetReceiptV1[];
   /** The run's product-owned scene entry evidence attempt; never a model tool call. */
   sceneEvidence?: RuntimePerformanceSceneEvidenceReceiptV1;
@@ -305,6 +318,10 @@ export class RuntimePerformanceRecorder {
   private readonly sql: RuntimePerformanceSqlReceiptV1[] = [];
   private readonly modelCalls: RuntimePerformanceModelCallReceiptV1[] = [];
   private finalReview: RuntimePerformanceFinalReviewReceiptV1 | undefined;
+  private declaration: RuntimePerformanceDeclarationReceiptV1 | undefined;
+  // Independent of capped timing arrays. Absence from those arrays cannot
+  // establish that no repair was attempted.
+  private declarationRepair: RuntimePerformanceDeclarationReceiptV1['repair'] = 'not_requested';
   private readonly deliveryBudgets: RuntimePerformanceDeliveryBudgetReceiptV1[] = [];
   private sceneEvidence: RuntimePerformanceSceneEvidenceReceiptV1 | undefined;
   private nextToolSequence = 0;
@@ -338,6 +355,7 @@ export class RuntimePerformanceRecorder {
       || this.sql.length > 0
       || this.modelCalls.length > 0
       || this.finalReview !== undefined
+      || this.declaration !== undefined
       || this.deliveryBudgets.length > 0
       || this.sceneEvidence !== undefined
       || this.truncated.phases > 0
@@ -455,6 +473,7 @@ export class RuntimePerformanceRecorder {
   startModelCall(input: RuntimeModelCallStart): RuntimeModelCallSpan {
     this.assertCollecting('start_model_call');
     const startOffsetMs = this.offsetMs();
+    if (!this.declaration && input.purpose === 'declaration_repair') this.declarationRepair = 'not_completed';
     let firstOutputMs: number | undefined;
     let doneOffsetMs: number | undefined;
     let doneUsage: unknown;
@@ -472,6 +491,12 @@ export class RuntimePerformanceRecorder {
       end: (end = {}) => {
         if (ended || this.sealedReceipt) return;
         ended = true;
+        // A native success is not declaration acceptance. Keep an explicit
+        // acceptance decision even if the transport attaches its facts later.
+        if (!this.declaration && input.purpose === 'declaration_repair' &&
+          this.declarationRepair !== 'accepted' && this.declarationRepair !== 'rejected') {
+          this.declarationRepair = end.outcome === 'cancelled' || end.outcome === 'error' ? end.outcome : 'not_completed';
+        }
         const model = boundedModelName(end.model) ?? boundedModelName(input.model);
         const usage = normalizeModelCallUsage(end.usage ?? doneUsage);
         const output = end.output && Number.isSafeInteger(end.output.bodyChars) && end.output.bodyChars >= 0 &&
@@ -511,8 +536,33 @@ export class RuntimePerformanceRecorder {
     };
   }
 
+  /** Only the declaration acceptance boundary may supply either decision. */
+  recordDeclarationRepair(outcome: 'accepted' | 'rejected'): void {
+    this.assertCollecting('record_declaration_repair');
+    if (outcome !== 'accepted' && outcome !== 'rejected') throw new Error('runtime_performance_invalid_declaration_repair');
+    if (this.declaration) return;
+    this.declarationRepair = outcome;
+  }
+
+  /** Freeze all declaration facts at the first canonical finalization, not at seal. */
+  recordFinalDeclaration(input: Omit<RuntimePerformanceDeclarationReceiptV1, 'repair'>): void {
+    this.assertCollecting('record_final_declaration');
+    assertKnownFields(input as unknown as Record<string, unknown>, ['status', 'declaredClaimCount']);
+    if (!RUNTIME_DECLARATION_STATUSES.includes(input.status)) throw new Error('runtime_performance_invalid_declaration_status');
+    if (!Number.isSafeInteger(input.declaredClaimCount) || input.declaredClaimCount < 0) {
+      throw new Error('runtime_performance_invalid_declaration_count');
+    }
+    if (this.declaration) return;
+    this.declaration = {status: input.status, declaredClaimCount: input.declaredClaimCount, repair: this.declarationRepair};
+  }
+
   recordDeliveryBudget(input: RuntimePerformanceDeliveryBudgetReceiptV1): void {
     this.assertCollecting('record_delivery_budget');
+    if (!this.declaration && input.purpose === 'declaration_repair' &&
+      this.declarationRepair !== 'accepted' && this.declarationRepair !== 'rejected') {
+      if (input.decision === 'skip') this.declarationRepair = 'budget_skipped';
+      if (input.decision === 'dispatch') this.declarationRepair = 'not_completed';
+    }
     if (this.deliveryBudgets.length >= DEFAULT_MAX_RECEIPT_ITEMS) return;
     this.deliveryBudgets.push({purpose: input.purpose, decision: input.decision, source: input.source,
       estimateMs: boundedMs(input.estimateMs, 'delivery_budget_estimate'),
@@ -557,6 +607,7 @@ export class RuntimePerformanceRecorder {
       sql: [...this.sql],
       ...(this.modelCalls.length > 0 ? {modelCalls: [...this.modelCalls]} : {}),
       ...(this.finalReview ? {finalReview: this.finalReview} : {}),
+      ...(this.declaration ? {declaration: this.declaration} : {}),
       ...(this.deliveryBudgets.length > 0 ? {deliveryBudgets: [...this.deliveryBudgets]} : {}),
       ...(this.sceneEvidence ? {sceneEvidence: this.sceneEvidence} : {}),
       ...(this.truncated.phases > 0
@@ -702,6 +753,22 @@ export function recordRuntimeFinalReview(
   input: RuntimePerformanceFinalReviewReceiptV1,
 ): void {
   try { recorder?.recordFinalReview(input); } catch { /* Internal observability only. */ }
+}
+
+/** Record the acceptance boundary's decision; never alters the candidate or throws. */
+export function recordRuntimeDeclarationRepair(
+  recorder: RuntimePerformanceRecorder | undefined,
+  outcome: 'accepted' | 'rejected',
+): void {
+  try { recorder?.recordDeclarationRepair(outcome); } catch { /* Internal observability only. */ }
+}
+
+/** Record the first canonical declaration without changing its verification state. */
+export function recordRuntimeFinalDeclaration(
+  recorder: RuntimePerformanceRecorder | undefined,
+  input: Omit<RuntimePerformanceDeclarationReceiptV1, 'repair'>,
+): void {
+  try { recorder?.recordFinalDeclaration(input); } catch { /* Internal observability only. */ }
 }
 
 /** Record a delivery call's pre-dispatch budget decision on an optional recorder; never throws. */

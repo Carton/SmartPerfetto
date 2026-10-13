@@ -11,6 +11,8 @@ import {
   normalizeModelCallUsage,
   recordRuntimeDeliveryBudget,
   recordRuntimeFinalReview,
+  recordRuntimeDeclarationRepair,
+  recordRuntimeFinalDeclaration,
   runtimeModelCallInputBytesBucket,
   runtimeProviderOrigin,
   startRuntimeModelCall,
@@ -495,6 +497,115 @@ describe('runtime performance receipt', () => {
     expect(() => recordRuntimeDeliveryBudget(recorder, {purpose: 'review', decision: 'dispatch', source: 'stats',
       estimateMs: 1, remainingMs: 2})).not.toThrow();
     expect(recorder.seal().deliveryBudgets).toHaveLength(1);
+  });
+});
+
+describe('canonical declaration receipt', () => {
+  it.each(['absent', 'valid', 'partially_valid', 'invalid'] as const)(
+    'retains a declaration-only %s receipt with no model or provider content', status => {
+      const recorder = createRuntimePerformanceRecorder();
+      expect(recorder.hasRecordedData).toBe(false);
+      const declaredClaimCount = status === 'absent' ? 0 : 2;
+      recordRuntimeFinalDeclaration(recorder, {status, declaredClaimCount});
+      expect(recorder.hasRecordedData).toBe(true);
+      expect(recorder.seal()).toEqual({schemaVersion: 1, phases: [], tools: [], sql: [],
+        declaration: {status, declaredClaimCount, repair: 'not_requested'}});
+      expect(Object.isFrozen(recorder.seal().declaration)).toBe(true);
+    });
+
+  it.each(['not_completed', 'cancelled', 'error'] as const)(
+    'records a dispatched repair as %s without inferring acceptance from native success', outcome => {
+      const recorder = createRuntimePerformanceRecorder();
+      startRuntimeModelCall(recorder, {purpose: 'declaration_repair'}).end({outcome: outcome === 'not_completed' ? 'ok' : outcome});
+      recordRuntimeFinalDeclaration(recorder, {status: 'absent', declaredClaimCount: 0});
+      expect(recorder.seal().declaration).toEqual({status: 'absent', declaredClaimCount: 0, repair: outcome});
+    });
+
+  it.each(['started', 'dispatch_budget'] as const)('keeps a %s repair without a terminal decision explicitly incomplete', mode => {
+    const recorder = createRuntimePerformanceRecorder();
+    if (mode === 'started') startRuntimeModelCall(recorder, {purpose: 'declaration_repair'});
+    else recordRuntimeDeliveryBudget(recorder, {purpose: 'declaration_repair', decision: 'dispatch', source: 'default',
+      estimateMs: 180_000, remainingMs: 40_000});
+    recordRuntimeFinalDeclaration(recorder, {status: 'absent', declaredClaimCount: 0});
+    expect(recorder.seal().declaration?.repair).toBe('not_completed');
+  });
+
+  it.each(['accepted', 'rejected'] as const)('requires an explicit %s decision and preserves it across late transport facts', outcome => {
+    const recorder = createRuntimePerformanceRecorder();
+    const call = startRuntimeModelCall(recorder, {purpose: 'declaration_repair'});
+    recordRuntimeDeclarationRepair(recorder, outcome);
+    call.end({outcome: 'ok'});
+    recordRuntimeFinalDeclaration(recorder, {status: outcome === 'accepted' ? 'valid' : 'invalid', declaredClaimCount: 1});
+    expect(recorder.seal().declaration?.repair).toBe(outcome);
+  });
+
+  it('preserves repair cancellation even when the timing array is truncated', () => {
+    const recorder = createRuntimePerformanceRecorder({maxModelCalls: 1});
+    startRuntimeModelCall(recorder, {purpose: 'answer_turn'}).end();
+    startRuntimeModelCall(recorder, {purpose: 'declaration_repair'}).end({outcome: 'cancelled'});
+    recordRuntimeFinalDeclaration(recorder, {status: 'absent', declaredClaimCount: 0});
+    const receipt = recorder.seal();
+    expect(receipt.modelCalls).toHaveLength(1);
+    expect(receipt.modelCalls![0].purpose).toBe('answer_turn');
+    expect(receipt.truncated?.modelCalls).toBe(1);
+    expect(receipt.declaration?.repair).toBe('cancelled');
+  });
+
+  it('preserves the repair skip even when earlier budget records fill the array', () => {
+    const recorder = createRuntimePerformanceRecorder();
+    for (let index = 0; index < 600; index++) recordRuntimeDeliveryBudget(recorder, {
+      purpose: 'review', decision: 'dispatch', source: 'default', estimateMs: 1, remainingMs: 2});
+    recordRuntimeDeliveryBudget(recorder, {purpose: 'declaration_repair', decision: 'skip', source: 'default',
+      estimateMs: 180_000, remainingMs: 40_000});
+    recordRuntimeFinalDeclaration(recorder, {status: 'absent', declaredClaimCount: 0});
+    const receipt = recorder.seal();
+    expect(receipt.deliveryBudgets!.length).toBeLessThan(600);
+    expect(receipt.deliveryBudgets!.some(item => item.purpose === 'declaration_repair')).toBe(false);
+    expect(receipt.declaration?.repair).toBe('budget_skipped');
+  });
+
+  it('freezes both declaration and repair at the first canonical result before seal', () => {
+    const recorder = createRuntimePerformanceRecorder();
+    const pending = startRuntimeModelCall(recorder, {purpose: 'declaration_repair'});
+    recordRuntimeFinalDeclaration(recorder, {status: 'absent', declaredClaimCount: 0});
+    pending.end({outcome: 'cancelled'});
+    recordRuntimeDeclarationRepair(recorder, 'accepted');
+    recordRuntimeDeliveryBudget(recorder, {purpose: 'declaration_repair', decision: 'skip', source: 'default',
+      estimateMs: 1, remainingMs: 0});
+    startRuntimeModelCall(recorder, {purpose: 'declaration_repair'}).end({outcome: 'error'});
+    recordRuntimeFinalDeclaration(recorder, {status: 'valid', declaredClaimCount: 9});
+    expect(recorder.seal().declaration).toEqual({status: 'absent', declaredClaimCount: 0, repair: 'not_completed'});
+  });
+
+  it.each([
+    {status: 'SECRET_PROVIDER_TEXT', declaredClaimCount: 0},
+    {status: 'valid', declaredClaimCount: -1},
+    {status: 'valid', declaredClaimCount: 1.5},
+    {status: 'valid', declaredClaimCount: Number.MAX_SAFE_INTEGER + 1},
+    {status: 'valid', declaredClaimCount: 1, prompt: 'SECRET_PROVIDER_TEXT'},
+    {status: 'valid', declaredClaimCount: 1, repair: 'accepted'},
+  ])('rejects invalid or open declaration facts without persisting them: %#', input => {
+    const recorder = createRuntimePerformanceRecorder();
+    expect(() => recorder.recordFinalDeclaration(input as any)).toThrow();
+    expect(() => recordRuntimeFinalDeclaration(recorder, input as any)).not.toThrow();
+    expect(recorder.hasRecordedData).toBe(false);
+    expect(recorder.seal().declaration).toBeUndefined();
+    expect(JSON.stringify(recorder.seal())).not.toContain('SECRET_PROVIDER_TEXT');
+  });
+
+  it('ignores invalid repair decisions and remains inert without a recorder or after seal', () => {
+    const recorder = createRuntimePerformanceRecorder();
+    expect(() => recorder.recordDeclarationRepair('SECRET_PROVIDER_TEXT' as never)).toThrow();
+    expect(() => recordRuntimeDeclarationRepair(recorder, 'SECRET_PROVIDER_TEXT' as never)).not.toThrow();
+    recordRuntimeFinalDeclaration(recorder, {status: 'absent', declaredClaimCount: 0});
+    const receipt = recorder.seal();
+    expect(receipt.declaration?.repair).toBe('not_requested');
+    for (const target of [undefined, recorder]) {
+      expect(() => recordRuntimeDeclarationRepair(target, 'accepted')).not.toThrow();
+      expect(() => recordRuntimeFinalDeclaration(target, {status: 'valid', declaredClaimCount: 1})).not.toThrow();
+    }
+    expect(recorder.seal()).toBe(receipt);
+    expect(JSON.stringify(receipt)).not.toContain('SECRET_PROVIDER_TEXT');
   });
 });
 

@@ -2200,8 +2200,8 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
     if (!sqlUsesProcessNameFilter(sql)) return undefined;
     return localize(
       outputLanguage,
-      'Raw SQL 使用了进程/包名过滤；Process Identity Gate 只会自动保护 invoke_skill。信任这个 SQL 结论前，先用 process_identity_resolver 确认 canonical_package_name 与 recommended_process_name_param，或优先改用对应 Skill。',
-      'Raw SQL uses process/package-name filters; Process Identity Gate only protects invoke_skill automatically. Before trusting this SQL result, verify canonical_package_name and recommended_process_name_param with process_identity_resolver, or prefer the matching skill.',
+      'Raw SQL 使用了进程/包名过滤；Process Identity Gate 只会自动保护 invoke_skill。先核对 process_identity_resolver 的候选证据；目标明确后使用该行的 UPID 和原时间范围，优先重试对应 Skill。SQL 成功、排名或同名都不能消除身份歧义；仍未确认时保留限制。',
+      'Raw SQL uses process/package-name filters; Process Identity Gate only protects invoke_skill automatically. Inspect process_identity_resolver candidate evidence; once the target is distinguished, use that row\'s UPID and original time range, preferably retrying the matching Skill. SQL success, rank or a repeated name does not resolve identity ambiguity; retain unresolved limitations.',
     );
   }
 

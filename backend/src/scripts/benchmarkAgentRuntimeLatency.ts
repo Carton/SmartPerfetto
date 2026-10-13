@@ -19,9 +19,12 @@ import {
   PRODUCTION_RUNTIME_KINDS,
   type AgentRuntimeKind,
 } from '../agentRuntime/runtimeKinds';
-import type {
-  RuntimePerformancePhaseReceiptV1,
-  RuntimePerformanceReceiptV1,
+import {
+  RUNTIME_DECLARATION_STATUSES,
+  RUNTIME_DECLARATION_REPAIR_OUTCOMES,
+  type RuntimePerformancePhaseReceiptV1,
+  type RuntimePerformanceReceiptV1,
+  type RuntimePerformanceDeclarationReceiptV1,
 } from '../agentRuntime/runtimePerformance';
 import {canonicalContentHash, canonicalJsonString} from '../services/selfEvolution/canonicalJson';
 import {isSceneEntryNotRunReason, type RuntimePerformanceSceneEvidenceReceiptV1} from '../types/sceneEntryEvidence';
@@ -767,9 +770,10 @@ function parsePerformance(value: unknown): RuntimePerformanceReceiptV1 | undefin
   // Per-call model records, the review decision and delivery budget decisions are diagnostic
   // receipt fields; the latency scorer does not read them, so they are accepted and dropped.
   assertKnownFields(record, ['schemaVersion', 'firstOutputMs', 'phases', 'tools', 'sql', 'modelCalls', 'finalReview',
-    'deliveryBudgets', 'sceneEvidence', 'truncated'],
+    'deliveryBudgets', 'sceneEvidence', 'declaration', 'truncated'],
     'benchmark_runtime_performance_unknown_field');
   const sceneEvidence = parseSceneEvidenceReceipt(record.sceneEvidence);
+  const declaration = parseDeclarationReceipt(record.declaration);
   if (record.modelCalls !== undefined && !Array.isArray(record.modelCalls)) {
     throw new Error('benchmark_runtime_performance_arrays_invalid');
   }
@@ -849,7 +853,26 @@ function parsePerformance(value: unknown): RuntimePerformanceReceiptV1 | undefin
     tools,
     sql,
     ...(sceneEvidence ? {sceneEvidence} : {}),
+    ...(declaration ? {declaration} : {}),
     ...(truncated ? {truncated} : {}),
+  };
+}
+
+/** Closed declaration facts stay diagnostic; they never influence latency admission. */
+function parseDeclarationReceipt(value: unknown): RuntimePerformanceDeclarationReceiptV1 | undefined {
+  if (value === undefined) return undefined;
+  const record = asRecord(value, 'benchmark_runtime_declaration_invalid');
+  assertKnownFields(record, ['status', 'declaredClaimCount', 'repair'], 'benchmark_runtime_declaration_unknown_field');
+  if (!(RUNTIME_DECLARATION_STATUSES as readonly unknown[]).includes(record.status)) {
+    throw new Error('benchmark_runtime_declaration_status_invalid');
+  }
+  if (!(RUNTIME_DECLARATION_REPAIR_OUTCOMES as readonly unknown[]).includes(record.repair)) {
+    throw new Error('benchmark_runtime_declaration_repair_invalid');
+  }
+  return {
+    status: record.status as RuntimePerformanceDeclarationReceiptV1['status'],
+    declaredClaimCount: nonnegativeInteger(record.declaredClaimCount, 'benchmark_runtime_declaration_count_invalid'),
+    repair: record.repair as RuntimePerformanceDeclarationReceiptV1['repair'],
   };
 }
 

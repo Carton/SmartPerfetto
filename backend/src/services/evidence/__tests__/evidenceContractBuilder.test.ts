@@ -4,7 +4,7 @@
 
 import {describe, expect, it} from '@jest/globals';
 import type {ConclusionContract} from '../../../agent/core/conclusionContract';
-import {createDataEnvelope, type DataPayload} from '../../../types/dataContract';
+import {createDataEnvelope, type DataEnvelopeMeta, type DataPayload} from '../../../types/dataContract';
 import {
   QUERY_REVIEW_SCHEMA_VERSION,
   type QueryReviewV1,
@@ -13,7 +13,8 @@ import {buildEvidenceContract} from '../evidenceContractBuilder';
 import {parseConclusionContractDeclaration, type ConclusionContractClaimReference} from '../../../agent/core/conclusionContract';
 import {ArtifactStore} from '../../../agentv3/artifactStore';
 import {captureEvidenceTable, type CapturedFieldSemantics} from '../evidenceCapture';
-import {prepareClaimEvidence} from '../claimEvidencePreparation';
+import {prepareClaimEvidence, preparedReferenceResolution} from '../claimEvidencePreparation';
+import {isCurrentEmptyResultRead} from '../evidenceReadView';
 import {runDeterministicClaimVerifier} from '../../verifier/deterministicClaimVerifier';
 import {evidenceValuesMatch} from '../valueComparison';
 import type {EvidenceScopeProvenanceV1, IdentityResolutionV1} from '../../../types/identityContract';
@@ -1259,6 +1260,126 @@ describe('evidence rows carry their declared boundary onto the claims citing the
     const built = buildEvidenceContract({conclusionContract: contract, dataEnvelopes: [envelope]});
 
     expect(built.claimSupport[0].anchors[0]).not.toHaveProperty('claimBoundary');
+  });
+});
+
+describe('empty result target identity remains unbound', () => {
+  const target = {mode: 'exact_upid' as const, upid: 14, traceId: 'trace-empty',
+    traceSide: 'current' as const, identityRefId: 'identity:14'};
+  const scope: EvidenceScopeProvenanceV1 = {version: 'process_scope_evidence@1', entries: [
+    {role: 'target', scope: target, fields: [], availability: 'available'},
+    {role: 'peer_context', scope: {mode: 'unscoped', traceId: target.traceId, traceSide: target.traceSide},
+      fields: ['interface'], availability: 'available', relativeTo: target},
+  ]};
+  const verified: IdentityResolutionV1 = {version: 'identity_contract@1', identityRefId: target.identityRefId,
+    status: 'verified', target: {...target, source: 'user_param'},
+    processes: [{upid: target.upid, confidence: 1, matchSources: ['upid']}], threads: [], warnings: []};
+
+  async function emptyFixture(options: {
+    meta?: Partial<DataEnvelopeMeta>;
+    data?: DataPayload;
+    reference?: ConclusionContractClaimReference;
+    read?: 'live' | 'copied' | 'unbound' | 'legacy';
+    allowedTraceId?: string;
+  } = {}) {
+    // batch20 wechat art-62: an executed binder_calls result has no rows,
+    // no target-bearing fields and no identityResolution to borrow.
+    const envelope = createDataEnvelope(options.data ?? {columns: ['interface', 'count', 'dur_ms'], rows: []}, {
+      type: 'skill_result', source: 'jank_frame_detail:binder_calls', title: 'Binder calls',
+      evidenceRefId: 'data:empty-binder', artifactId: 'art-empty-binder',
+      traceId: target.traceId, traceSide: target.traceSide, executionStatus: 'empty', scopeProvenance: scope,
+      ...options.meta,
+    });
+    const reference = options.reference ?? {artifactId: 'art-empty-binder'};
+    const contract = parseConclusionContractDeclaration({schemaVersion: 'conclusion_contract_v1', mode: 'focused_answer',
+      conclusions: [], clusters: [], evidenceChain: [], uncertainties: [], nextSteps: [], claims: [{
+        id: 'binder-empty', kind: 'inference', text: 'The cited Binder query returned no rows.', references: [reference],
+        semantics: {schemaVersion: 'claim_semantics@1', predicate: 'sql.empty_result', polarity: 'affirmed',
+          discourse: 'asserted', quantifier: 'one', modality: 'certain', scope: {population: 'selected_interval'}},
+      }]}).contract!;
+    const store = new ArtifactStore();
+    expect(store.registerStandaloneEvidenceCapture(captureEvidenceTable(envelope.data),
+      {meta: envelope.meta, display: envelope.display})).toBe(true);
+    const view = store.createEvidenceReadView({ownerKey: 'empty-result-test',
+      ...(options.read === 'unbound' ? {} : {currentRunId: 'run-current'}),
+      allowedTraces: [{traceId: options.allowedTraceId ?? target.traceId, traceSide: target.traceSide}]});
+    const prepared = options.read === 'legacy' ? undefined : await prepareClaimEvidence({conclusionContract: contract,
+      bindingEligibility: 'eligible', evidenceReadView: options.read === 'copied'
+        ? {resolveReferences: async requests => structuredClone(await view.resolveReferences(requests))} : view});
+    const built = buildEvidenceContract({conclusionContract: contract, preparedEvidence: prepared,
+      bindingEligibility: 'eligible', dataEnvelopes: [envelope]});
+    return {built, view, resolution: prepared && preparedReferenceResolution(prepared, reference),
+      verification: runDeterministicClaimVerifier({claimSupport: built.claimSupport})};
+  }
+
+  it.each(['empty', 'observed'] as const)('does not invent an identity conflict for an issued %s empty table', async executionStatus => {
+    const {built, verification, resolution} = await emptyFixture({meta: {executionStatus}});
+    expect(isCurrentEmptyResultRead(resolution)).toBe(true);
+    expect(built.claimSupport[0].anchors[0]).toMatchObject({missing: true, missingReason: 'cited_scope_identity_unbound'});
+    expect(built.claimSupport[0].anchors[0].identity).toBeUndefined();
+    expect(verification.unsupportedClaimCount).toBe(0);
+    expect(verification.claimResults[0]).toMatchObject({status: 'partial', referenceCells: [{status: 'not_checked'}],
+      deterministicProof: {status: 'candidate', reason: 'unsupported_predicate'}});
+    expect(verification.passed).toBe(false);
+    expect(isCurrentEmptyResultRead(structuredClone(resolution!))).toBe(false);
+    expect(runDeterministicClaimVerifier({claimSupport: structuredClone(built.claimSupport)}).claimResults[0].status)
+      .toBe('unsupported');
+  });
+
+  it.each(['copied', 'unbound', 'legacy'] as const)('does not grant the empty-result exception to a %s read', async read => {
+    const {built, resolution, verification} = await emptyFixture({read});
+    expect(isCurrentEmptyResultRead(resolution)).toBe(false);
+    expect(built.claimSupport[0].anchors[0].missingReason).not.toBe('cited_scope_identity_unbound');
+    expect(verification.passed).toBe(false);
+  });
+
+  it('does not use metadata-only access as an empty-result witness', async () => {
+    const {view} = await emptyFixture();
+    const [metadataOnly] = await view.resolveReferences([{key: 'metadata-only', reference: {artifactId: 'art-empty-binder'},
+      requiredColumns: [], metadataOnly: true}]);
+    expect(metadataOnly.status).toBe('resolved');
+    expect(isCurrentEmptyResultRead(metadataOnly)).toBe(false);
+  });
+
+  it.each([
+    {meta: {executionStatus: undefined}}, {meta: {executionStatus: 'skipped' as const}},
+    {meta: {executionStatus: 'optional_error' as const}}, {meta: {executionStatus: 'unavailable' as const}},
+    {allowedTraceId: 'another-trace'},
+    {data: {columns: ['interface', 'count', 'dur_ms'], rows: [['server', 1, 2]]}},
+    {reference: {artifactId: 'art-empty-binder', rowIndex: 0}},
+    {reference: {artifactId: 'art-empty-binder', column: 'count', value: 0}},
+    {reference: {artifactId: 'art-empty-binder', rowSelector: {count: 0}}},
+  ])('requires an observed authorized whole-result empty capture: %j', async options => {
+    const {built, resolution, verification} = await emptyFixture(options);
+    expect(isCurrentEmptyResultRead(resolution)).toBe(false);
+    expect(built.claimSupport[0].anchors[0].missingReason).not.toBe('cited_scope_identity_unbound');
+    expect(verification.passed).toBe(false);
+  });
+
+  it.each([
+    {fields: undefined}, {fields: ['count']}, {availability: 'unavailable' as const},
+    {scope: {...target, traceId: 'another-trace'}}, {scope: {...target, traceSide: 'reference' as const}},
+  ])('retains invalid or target-bearing scope rejection: %j', async patch => {
+    const provenance = {version: scope.version, entries: [{...scope.entries[0], ...patch}, scope.entries[1]]};
+    const {built, verification} = await emptyFixture({meta: {scopeProvenance: provenance}});
+    expect(built.claimSupport[0].anchors[0].missingReason).not.toBe('cited_scope_identity_unbound');
+    expect(verification.claimResults[0].status).toBe('unsupported');
+  });
+
+  it.each([
+    {identityStatus: 'error' as const}, {identityStatus: 'ambiguous' as const},
+    {identityRefId: 'conflicting-meta'},
+    {identityRefId: target.identityRefId, identityStatus: 'verified' as const,
+      identityResolution: {...verified, status: 'ambiguous' as const}},
+    {identityRefId: 'conflicting-meta', identityStatus: 'verified' as const, identityResolution: verified},
+    {identityRefId: target.identityRefId, identityStatus: 'verified' as const,
+      identityResolution: {...verified, target: {...verified.target, traceId: 'another-trace'}}},
+    {identityRefId: target.identityRefId, identityStatus: 'verified' as const,
+      identityResolution: {...verified, processes: [{upid: 15, confidence: 1, matchSources: ['upid' as const]}]}},
+  ])('does not suppress explicit identity metadata conflicts: %j', async meta => {
+    const {built, verification} = await emptyFixture({meta});
+    expect(built.claimSupport[0].anchors[0]).toMatchObject({missing: true, missingReason: 'captured_identity_conflict'});
+    expect(verification.claimResults[0].status).toBe('unsupported');
   });
 });
 

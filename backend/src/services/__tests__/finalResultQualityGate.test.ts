@@ -73,6 +73,25 @@ function finalizationContext(target: AnalysisResult): AnalysisDeliveryContext {
     outputOrigin: 'sdk_final', turnIntent: resolvedIntent()};
 }
 
+describe('identity uncertainty remains separate from report delivery', () => {
+  it.each(['ambiguous', 'weak', 'error'] as const)('delivers the completed body while retaining %s identity assurance', status => {
+    const target = result({conclusion: 'System observations are available; target process attribution remains uncertain.'});
+    const body = target.conclusion;
+    const confidence = target.confidence;
+    const resolution = {version: 'identity_contract@1' as const, identityRefId: 'identity-current', status,
+      target: {traceId: 'trace-current', traceSide: 'current' as const, source: 'user_param' as const},
+      processes: [], threads: [], warnings: []};
+    expect(applyFinalResultQualityGate({result: target, query: 'Compare available trace evidence',
+      context: finalizationContext(target), comparisonIdentity: {currentTraceId: 'trace-current',
+        referenceTraceId: 'trace-reference', currentResolution: resolution}})).toBeUndefined();
+    expect(target.deliveryAssurance).toMatchObject({completion: 'passed', identity: 'failed'});
+    expect(target.conclusion).toBe(body);
+    expect(target.confidence).toBe(confidence);
+    expect(target.partial).not.toBe(true);
+    expect(target.terminationReason).toBeUndefined();
+  });
+});
+
 function assessUnreviewedReport(input: Parameters<typeof assessFinalResultQuality>[0]) {
   const assessment = assessFinalResultQualityAssessment(input);
   expect(assessment.assurance.report).toBe('not_checked');

@@ -450,8 +450,11 @@ function issueForReference(claim: ClaimSupportV1, reference: ClaimReferenceVerif
   // Unverified references are reported once per claim and reason by verifyClaim.
   if (reference.status === 'matched' || reference.status === 'not_checked' || reference.status === 'ineligible') return undefined;
   const anchors = claim.anchors.filter(anchor => anchor.anchorId === reference.anchorId);
+  // References and typed semantics may cite the same cell with different
+  // redundant identifiers. Each resulting anchor must retain its own issued
+  // read authority; matching anchor IDs alone confer no advisory standing.
   const advisory = claim.kind !== 'identity' &&
-    anchors.length === 1 && referenceBindingFailureIsAdvisory(anchors[0], reference.status);
+    anchors.length > 0 && anchors.every(anchor => referenceBindingFailureIsAdvisory(anchor, reference.status));
   return {
     claimId: claim.claimId,
     severity: advisory ? 'warning' : 'error',

@@ -466,6 +466,26 @@ describe('agent runtime latency benchmark contracts', () => {
     })).toThrow('benchmark_artifact_provenance_mismatch');
   });
 
+  it.each(['not_requested', 'accepted', 'rejected', 'budget_skipped', 'cancelled', 'error', 'not_completed'] as const)(
+    'keeps the closed declaration repair outcome %s as diagnostic metadata', repair => {
+      const declaration = {status: 'partially_valid', declaredClaimCount: 4, repair};
+      expect(parseRuntimeBenchmarkCell({...cell(), performance: {...basePerformance, declaration}}).performance)
+        .toEqual({...basePerformance, declaration});
+    });
+
+  it.each([
+    null,
+    {status: 'SECRET_PROVIDER_TEXT', declaredClaimCount: 0, repair: 'not_requested'},
+    {status: 'valid', declaredClaimCount: 0, repair: 'SECRET_PROVIDER_TEXT'},
+    {status: 'valid', declaredClaimCount: -1, repair: 'accepted'},
+    {status: 'valid', declaredClaimCount: 0.5, repair: 'accepted'},
+    {status: 'valid', declaredClaimCount: Number.MAX_SAFE_INTEGER + 1, repair: 'accepted'},
+    {status: 'valid', declaredClaimCount: 1, repair: 'accepted', raw: 'SECRET_PROVIDER_TEXT'},
+    {status: 'valid', declaredClaimCount: 1},
+  ])('rejects malformed or open declaration receipt fields: %#', declaration => {
+    expect(() => parseRuntimeBenchmarkCell({...cell(), performance: {...basePerformance, declaration}})).toThrow();
+  });
+
   it('rejects provider/model/snapshot/runtime/trace/query/mode mismatches before scoring', () => {
     const base = cell();
     const mismatches: Array<Partial<RuntimeBenchmarkCell>> = [

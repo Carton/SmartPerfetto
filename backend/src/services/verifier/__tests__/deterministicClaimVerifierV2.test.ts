@@ -745,6 +745,7 @@ describe('mechanism and empty results', () => {
 describe('prepared reference outcomes across capture, builder and verifier', () => {
   async function preparedFixture(options: {
     reference?: ConclusionContractClaimReference;
+    subjectReference?: ConclusionContractClaimReference;
     rows?: EvidenceScalar[][];
     declaredNumber?: number;
     readBudget?: number;
@@ -767,7 +768,7 @@ describe('prepared reference outcomes across capture, builder and verifier', () 
         ...(options.declaredNumber === undefined && !options.categorical ? {} : {semantics: {
           schemaVersion: 'claim_semantics@1' as const, predicate: options.categorical ? 'captured.cell' : 'numeric.cell', polarity: 'affirmed' as const,
           discourse: 'asserted' as const, quantifier: 'one' as const, modality: 'certain' as const,
-          scope: {population: 'cited_rows' as const, subjectRefs: [ref]},
+          scope: {population: 'cited_rows' as const, subjectRefs: [options.subjectReference ?? ref]},
           ...(options.categorical ? {} : {numeric: {operator: 'eq' as const, value: options.declaredNumber!, unit: 'count'}}),
         }}),
       }],
@@ -778,6 +779,7 @@ describe('prepared reference outcomes across capture, builder and verifier', () 
     if (!parsed.contract) throw new Error('Prepared fixture requires a valid declaration');
     const envelope = createDataEnvelope({columns: ['value'], rows: options.rows ?? [[54]]}, {
       type: 'sql_result', source: 'execute_sql', title: 'Count', evidenceRefId: 'data:prepared',
+      sourceToolCallId: 'execute_sql:prepared',
       traceId: 'trace-current', traceSide: 'current', executionStatus: 'observed',
       ...(options.invalidScope ? {scopeProvenance: {version: 'process_scope_evidence@1' as const, entries: [], invalid: true}} : {}),
     });
@@ -865,6 +867,54 @@ describe('prepared reference outcomes across capture, builder and verifier', () 
     expect(output.claimResults[0].referenceCells[0].status).toBe('value_mismatch');
     expect(output.claimResults[0].deterministicProof.status).toBe(declaredNumber === 54 ? 'candidate' : 'rejected');
     expect(output.status).toBe(declaredNumber === 54 ? 'partial' : 'failed');
+  });
+
+  it.each(['value', 'absent'])('keeps duplicate live %s references advisory across declaration and typed scope', async column => {
+    // batch20 video c30 / wechat rt_attributable: the declaration repeated the
+    // same locator in subjectRefs but omitted its redundant sourceToolCallId.
+    const subjectReference = {evidenceRefId: 'data:prepared', rowIndex: 0, column, value: 99};
+    const {output, built} = await preparedFixture({currentRunId: 'run-current', declaredNumber: 54,
+      reference: {...subjectReference, sourceToolCallId: 'execute_sql:prepared'}, subjectReference});
+    const anchors = built.claimSupport[0].anchors;
+    expect(anchors).toHaveLength(2);
+    expect(anchors[0]).not.toBe(anchors[1]);
+    expect(anchors[0].anchorId).toBe(anchors[1].anchorId);
+    expect(output.claimResults[0].referenceCells).toHaveLength(2);
+    expect(output.claimResults[0].referenceCells.every(cell => cell.status ===
+      (column === 'value' ? 'value_mismatch' : 'missing'))).toBe(true);
+    expect(output.claimResults[0].status).toBe('partial');
+    expect(output.claimResults[0].deterministicProof.status).toBe('candidate');
+    expect(output.issues.every(issue => issue.severity === 'warning')).toBe(true);
+    const identity = runDeterministicClaimVerifier({claimSupport: [{...built.claimSupport[0], kind: 'identity'}]});
+    expect(identity.claimResults[0].status).toBe('unsupported');
+    expect(identity.issues.some(issue => issue.severity === 'error')).toBe(true);
+  });
+
+  it.each(['copied', 'unbound', 'denied', 'invalidScope'] as const)(
+    'does not let a live advisory anchor authorize a same-ID %s anchor', async kind => {
+      const reference = {evidenceRefId: 'data:prepared', rowIndex: 0, column: 'value', value: 99};
+      const {built} = await preparedFixture({currentRunId: 'run-current', reference});
+      const live = built.claimSupport[0];
+      const other = kind === 'copied' ? structuredClone(live.anchors[0]) :
+        (await preparedFixture({reference, ...(kind === 'unbound' ? {} :
+          {currentRunId: 'run-current', [kind]: true})})).built.claimSupport[0].anchors[0];
+      expect(other.anchorId).toBe(live.anchors[0].anchorId);
+      const output = runDeterministicClaimVerifier({claimSupport: [{...live, anchors: [...live.anchors, other]}]});
+      expect(output.claimResults[0].status).toBe('unsupported');
+      expect(output.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({code: 'claim_reference_value_mismatch', severity: 'error'}),
+      ]));
+    });
+
+  it('retains a numeric contradiction when both same-ID references have live read authority', async () => {
+    const subjectReference = {evidenceRefId: 'data:prepared', rowIndex: 0, column: 'value', value: 99};
+    const {output} = await preparedFixture({currentRunId: 'run-current', declaredNumber: 55,
+      reference: {...subjectReference, sourceToolCallId: 'execute_sql:prepared'}, subjectReference});
+    expect(output.claimResults[0].deterministicProof).toMatchObject({status: 'rejected', reason: 'numeric_operator_rejected'});
+    expect(output.claimResults[0].status).toBe('unsupported');
+    expect(output.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({code: 'numeric_operator_rejected', severity: 'error'}),
+    ]));
   });
 
   it.each([54, 55])('an extra absent citation cannot prove or hide proposition %s', async declaredNumber => {

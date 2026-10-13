@@ -57,7 +57,7 @@ import {issueSceneTimelinePublication, type SceneTimelinePublication} from '../a
 import {localize, type OutputLanguage} from '../agentv3/outputLanguage';
 import type {FinalizationProgressEvent, FinalizationProgressObserver} from './finalizationProgress';
 import {currentRuntimePerformanceRecorder} from './selfEvolution/runManifestLifecycle';
-import {recordRuntimeFinalReview, type RuntimeFinalReviewTrigger} from '../agentRuntime/runtimePerformance';
+import {recordRuntimeFinalDeclaration, recordRuntimeFinalReview, type RuntimeFinalReviewTrigger} from '../agentRuntime/runtimePerformance';
 
 export interface AnalysisFinalizationOwner {
   runId: string;
@@ -178,10 +178,12 @@ function assertOwner(owner: AnalysisFinalizationOwner): void {
 
 function pinnedRequirements(context: RuntimeFinalizationContext): PinnedAnalysisReportRequirements | undefined {
   if (context.turnIntent.status !== 'resolved' || context.turnIntent.deliverable !== 'report') return undefined;
+  // A registered scene may declare no section requirements. Pin that resolved
+  // empty set; an unknown scene still has no authoritative report policy.
+  if (!context.strategyRegistry.getStrategy(context.turnIntent.sceneId)) return undefined;
   const contract = getFinalReportContract(context.turnIntent.sceneId, context.strategyRegistry);
-  if (!contract) return undefined;
   return {sceneId: context.turnIntent.sceneId, registryFingerprint: context.strategyRegistry.registryFingerprint,
-    requirements: contract.requiredSections.map(({id, label, description, required, condition}) => ({
+    requirements: (contract?.requiredSections ?? []).map(({id, label, description, required, condition}) => ({
       id, label, description, required, condition,
     }))};
 }
@@ -220,7 +222,7 @@ function sameCapturedCell(
       finiteProof.status !== 'proved' || prior.propositionCoverage?.status !== 'complete')) return undefined;
   const subject = semantics.scope.subjectRefs?.length === 1 &&
     (semantics.scope.objectRefs?.length || 0) === 0 ? semantics.scope.subjectRefs[0] : undefined;
-  if (!subject?.evidenceRefId || subject.rowIndex === undefined || subject.rowIndex < 0 || !subject.column) return undefined;
+  if (!subject || subject.rowIndex === undefined || subject.rowIndex < 0 || !subject.column) return undefined;
   const {rowIndex, column} = subject;
   const referenceKey = evidenceReferenceKey(subject);
   // The unit is producer authority: the captured field semantics the anchor
@@ -230,7 +232,7 @@ function sameCapturedCell(
     const unit = facts?.fields[column]?.unit;
     if (!facts || facts.originalRowIndex !== rowIndex || !unit || !unit.trim()) return [];
     if (facts.referenceKey !== undefined ? facts.referenceKey !== referenceKey
-      : anchor.evidenceRefId !== subject.evidenceRefId) return [];
+      : !subject.evidenceRefId || anchor.evidenceRefId !== subject.evidenceRefId) return [];
     if (numericCell && !finiteProof?.anchorIds.includes(anchor.anchorId)) return [];
     return (anchor.cells ?? [])
       .filter(cell => cell.rowIndex === rowIndex && cell.column === column)
@@ -306,7 +308,8 @@ function joinClaimVerification(input: {
       // additionally needs the captured-cell identity of plan 2 D: the same
       // shown value in another cell's place is a real mismatch.
       const displayRounding = (issue: typeof review.issues[number]): boolean => {
-        if (presentation || issue.code !== 'numeric_mismatch') return false;
+        if (issue.code !== 'numeric_mismatch' || (presentation &&
+            !(presentation.status === 'not_checked' && presentation.reason === 'quote_unresolved'))) return false;
         const cell = sameCapturedCell(claim, supportById.get(id), review, issue, body, prior);
         return cell ? locatedNumbersShowDeclaredRounding(body, issue.contentLocations,
           {operator: 'eq', value: cell.value, unit: cell.unit}, cell.requirePrecisionLoss) : false;
@@ -643,6 +646,13 @@ export async function finalizeAnalysisResult(input: FinalizeAnalysisResultInput)
     let semantic: FinalSemanticAssessment | undefined;
     const selectionScope = context?.getSelection(owner.signal);
     const declaredClaimCount = validationContract?.claims?.length ?? 0;
+    const declarationStatuses = [canonical.protocolDiagnostics?.sidecar.status, canonical.protocolDiagnostics?.typedJson?.status];
+    recordRuntimeFinalDeclaration(currentRuntimePerformanceRecorder(), {
+      status: canonical.bindingEligibility === 'ineligible' || declarationStatuses.includes('invalid') ? 'invalid' :
+        declarationStatuses.includes('valid') ? 'valid' :
+          declarationStatuses.includes('partially_valid') ? 'partially_valid' : 'absent',
+      declaredClaimCount,
+    });
     // An ineligible declaration keeps its own unchecked reason; its review is never sent.
     const reviewTriggers = context && canonical.bindingEligibility !== 'ineligible' ? semanticReviewTriggers({
       context, delivery, selectionPresent: selectionScope?.present === true, sourceScope, rawDeclaration,

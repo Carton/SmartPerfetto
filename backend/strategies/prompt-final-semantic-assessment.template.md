@@ -279,6 +279,15 @@ half-open UTF-16 offsets. Never return `start` or `end` in these entries.
 Exception: for a `numeric_mismatch` issue, even when a catalog is supplied,
 quote only the displayed number with its unit (for example
 `{"text":"5,844.24 ms"}`, with `occurrence` when needed), not a catalog line.
+For a single-cell `captured.cell` or `numeric.cell` claim with a display-precision
+dispute, both claim-level and `numeric_mismatch` issue-level `contentLocations`
+must quote those exact displayed values. Locate every disputed occurrence
+separately; do not select an entire catalog line containing other metrics or
+comparison words. This narrows locations, not the review: still read the complete
+body to assess subject, scope and qualifiers. Report nonnumeric subject/scope
+issues independently with their own relevant locations and allowed issue codes.
+Never omit a wrong repeated value or another contradiction to make a rounding
+explanation fit.
 
 The quotation form's `text` is a nonempty, non-whitespace quotation copied
 exactly from `body`. Preserve spaces, line endings, punctuation and Unicode

@@ -40,7 +40,11 @@ inputs:
   - name: package
     type: string
     required: false
-    description: "应用包名（可选，不填则分析所有应用）"
+    description: "应用包名（可选；未提供任何目标选择器时分析所有应用）"
+  - name: upid
+    type: integer
+    required: false
+    description: "证据选定的 trace 内唯一进程 ID；用于消除同名实例歧义，仍须通过身份门禁"
   - name: start_ts
     type: timestamp
     required: false

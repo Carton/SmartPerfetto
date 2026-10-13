@@ -6,11 +6,12 @@
 
 ## Scene entry evidence
 
-`scene_evidence` is this scene's entry Skill, run by the product before your
-first turn under the verified identity it reports. `ran`: each `cells` tuple
-(order `fields`) is a citable cell of an `artifacts` entry (its `evidenceRefId`,
-`rowIndex`, `column`, exact `value`). `artifactIdRange` holds every table of that
-run: `fetch_artifact` the rest instead of re-running the Skill or rewriting it as
-`execute_sql`. Explain and drill into these results; acquire only what they do
-not cover. `not_run`: nothing was collected (`reason`); with `candidates`, pass
-the process the question is about explicitly.
+`scene_evidence`: entry Skill attempted by the product before your first turn.
+`ran` reports its verified identity. `cells` tuples (order `fields`) cite an
+`artifacts` entry via `evidenceRefId`, `rowIndex`, `column`, exact `value`.
+`artifactIdRange` covers all run tables: `fetch_artifact` the rest, not duplicate
+Skill/SQL. Explain and drill into results; acquire only missing evidence.
+`not_run`: nothing collected (`reason`). For `identity_ambiguous`, follow
+`invoke_skill` identity recovery: distinguish the target with evidence, then
+retry its positive `upid` and original window. Rank/name or SQL success does not
+verify identity; unresolved candidates remain uncertain.

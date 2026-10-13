@@ -124,7 +124,8 @@ export interface EvidenceReadViewOptions {
   budget?: Partial<EvidenceReadBudget>;
 }
 export interface EvidenceReadRecord {record: CapturedEvidenceRecord; witness: EvidenceTableWitness}
-const resolutions = new WeakMap<object, {witness: EvidenceTableWitness; rowIndex?: number; fields: readonly string[]}>();
+const resolutions = new WeakMap<object, {witness: EvidenceTableWitness; rowIndex?: number; fields: readonly string[];
+  wholeResult?: true}>();
 // These capabilities are never serialized. A reason string or a restored read
 // result cannot turn a bad reference into a current-run advisory diagnostic.
 // "Current" describes the authorized lookup, not the capture's origin run:
@@ -154,6 +155,21 @@ export function referenceBindingFailureIsAdvisory(anchor: object, status: string
   if (status === 'value_mismatch') return resolution.status === 'resolved' && Boolean(getCapturedAnchorFacts(anchor));
   return status === 'missing' && resolution.status === 'missing' &&
     locatorFailureIsAdvisory(resolution.reason, resolution.locatorDetail);
+}
+
+/** An authorized live whole-result read observed an empty table, not a missing capture. */
+export function isCurrentEmptyResultRead(resolution: EvidenceReadResolution | undefined): boolean {
+  if (!resolution || resolution.status !== 'resolved' || !currentReads.has(resolution) ||
+      resolution.originalRowIndex !== undefined || resolution.row !== undefined) return false;
+  const captured = resolutions.get(resolution);
+  if (!captured?.wholeResult || captured.rowIndex !== undefined ||
+      captured.witness.captureId !== resolution.record.captureId) return false;
+  const {meta} = resolution.record;
+  if ((meta.executionStatus !== 'observed' && meta.executionStatus !== 'empty') ||
+      !meta.traceId?.trim() || meta.traceId === 'unknown' ||
+      (meta.traceSide !== 'current' && meta.traceSide !== 'reference')) return false;
+  const table = capturedEvidenceTable(captured.witness);
+  return Boolean(table && !table.unavailableReason && table.rows.length === 0 && resolution.record.totalRowCount === 0);
 }
 
 export function bindReadResolutionToAnchor(anchor: object, resolution: EvidenceReadResolution): void {
@@ -343,7 +359,10 @@ export function createEvidenceReadView(records: () => readonly EvidenceReadRecor
       if (rowIndex !== undefined) recordRead.rows.set(rowIndex, {values, nativeRow});
       const resolution: EvidenceReadResolution = freezeEvidenceValue({key: request.key, status: 'resolved', record,
         ...(rowIndex !== undefined ? {originalRowIndex: rowIndex, row} : {})});
-      resolutions.set(resolution, {witness, rowIndex, fields: [...needed]});
+      resolutions.set(resolution, {witness, rowIndex, fields: [...needed],
+        ...(rowIndex === undefined && request.requiredColumns.length === 0 &&
+          !['rowIndex', 'rowSelector', 'column', 'value'].some(field => Object.prototype.hasOwnProperty.call(ref, field))
+          ? {wholeResult: true as const} : {})});
       out.push(resolution);
     }
     if (options.currentRunId?.trim()) out.forEach(resolution => currentReads.add(resolution));
